@@ -421,6 +421,8 @@ The right-hand pane shows files currently loaded into the agent's context.
 | `u`      | Un-cross the selected file                        |
 | `c`      | Clear all crossed-off files                       |
 
+These hotkeys use printable letters, so they only act on the context pane when the editor is not focused. Press `Esc` to leave the editor before navigating the pane.
+
 ### Editor Shortcuts
 
 | Shortcut            | Action                                    |

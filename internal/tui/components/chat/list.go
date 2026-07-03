@@ -37,11 +37,10 @@ type messagesCmp struct {
 	rendering     bool
 	attachments   viewport.Model
 
-	// collapsedThinking tracks which assistant messages should render their
-	// reasoning as a single pulsing line instead of the full block. The
-	// default for any new message is collapsed (true) to keep the terminal
-	// clean; Tab toggles the focused message.
-	collapsedThinking map[string]bool
+	// expandedThinking tracks which assistant messages should render their
+	// full reasoning block. The default for any new message is collapsed
+	// (false) to keep the terminal clean; Tab toggles the focused message.
+	expandedThinking map[string]bool
 }
 type renderFinishedMsg struct{}
 
@@ -102,7 +101,7 @@ func (m *messagesCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if msg.String() == "tab" && m.currentMsgID != "" {
-			m.collapsedThinking[m.currentMsgID] = !m.collapsedThinking[m.currentMsgID]
+			m.expandedThinking[m.currentMsgID] = !m.expandedThinking[m.currentMsgID]
 			delete(m.cachedContent, m.currentMsgID)
 			m.renderView()
 			return m, tea.Batch(cmds...)
@@ -237,7 +236,7 @@ func (m *messagesCmp) renderView() {
 				m.app.Messages,
 				m.currentMsgID,
 				isSummary,
-				m.collapsedThinking[msg.ID],
+				m.expandedThinking[msg.ID],
 				m.spinner.View(),
 				m.width,
 				pos,
@@ -497,6 +496,6 @@ func NewMessagesCmp(app *app.App) tea.Model {
 		viewport:          vp,
 		spinner:           s,
 		attachments:       attachmets,
-		collapsedThinking: make(map[string]bool),
+		expandedThinking:  make(map[string]bool),
 	}
 }

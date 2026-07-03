@@ -27,15 +27,25 @@ func GetAgentPrompt(agentName config.AgentName, provider models.ModelProvider) s
 		basePrompt = "You are a helpful assistant"
 	}
 
-	if agentName == config.AgentCoder || agentName == config.AgentTask {
-		// Add context from project-specific instruction files if they exist
-		contextContent := getContextFromPaths()
+	// Ponytail Protocol and project-specific context files are scoped to the
+	// agents that actually write code. Title and Summarizer must remain
+	// unopinionated to keep session titles and summaries clean.
+	if !agentUsesPonytail(agentName) {
+		return basePrompt
+	}
+
+	if contextContent := getContextFromPaths(); contextContent != "" {
 		logging.Debug("Context content", "Context", contextContent)
-		if contextContent != "" {
-			return appendPonytailProtocol(fmt.Sprintf("%s\n\n# Project-Specific Context\n Make sure to follow the instructions in the context below\n%s", basePrompt, contextContent))
-		}
+		return appendPonytailProtocol(fmt.Sprintf("%s\n\n# Project-Specific Context\n Make sure to follow the instructions in the context below\n%s", basePrompt, contextContent))
 	}
 	return appendPonytailProtocol(basePrompt)
+}
+
+// agentUsesPonytail reports whether the Ponytail Protocol should be appended
+// to the given agent's prompt. Only Coder and Task receive it; Title and
+// Summarizer stay unopinionated.
+func agentUsesPonytail(agentName config.AgentName) bool {
+	return agentName == config.AgentCoder || agentName == config.AgentTask
 }
 
 const ponytailProtocol = `### EXECUTION MANDATE: THE PONYTAIL PROTOCOL

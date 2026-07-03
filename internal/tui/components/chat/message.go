@@ -121,7 +121,7 @@ func renderAssistantMessage(
 	messagesService message.Service, // We need this to get the task tool messages
 	focusedUIMessageId string,
 	isSummary bool,
-	thinkingCollapsed bool,
+	thinkingExpanded bool,
 	spinnerFrame string,
 	width int,
 	position int,
@@ -186,11 +186,11 @@ func renderAssistantMessage(
 		position += messages[0].height
 		position++ // for the space
 	} else if thinking && thinkingContent != "" {
-		if thinkingCollapsed {
-			content = renderThinkingCollapsed(spinnerFrame, width)
-		} else {
-			// Render the thinking content
+		if thinkingExpanded {
+			// Render the full thinking content
 			content = renderMessage(thinkingContent, false, msg.ID == focusedUIMessageId, width)
+		} else {
+			content = renderThinkingCollapsed(spinnerFrame, width)
 		}
 	}
 
