@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aux Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080704;
+      --panel: rgba(37, 28, 12, .78);
+      --panel-2: rgba(22, 18, 10, .86);
+      --line: rgba(245, 158, 11, .34);
+      --line-strong: rgba(251, 191, 36, .72);
+      --text: #fff7df;
+      --muted: #b89450;
+      --amber: #f59e0b;
+      --amber-2: #fbbf24;
+      --copper: #d97706;
+      --danger: #fb923c;
+      --ok: #facc15;
+      --shadow: 0 0 30px rgba(245, 158, 11, .16);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 12%, rgba(251, 191, 36, .18), transparent 24rem),
+        radial-gradient(circle at 84% 80%, rgba(217, 119, 6, .14), transparent 28rem),
+        linear-gradient(135deg, #080704, #151006 55%, #090704);
+      font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(245, 158, 11, .07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(245, 158, 11, .07) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: radial-gradient(circle at center, black, transparent 72%);
+    }
+    header {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(8, 7, 4, .72);
+      backdrop-filter: blur(16px);
+    }
+    .brand { display: flex; gap: 14px; align-items: center; }
+    .mark {
+      width: 38px; height: 38px; border: 1px solid var(--line-strong); border-radius: 50%;
+      display: grid; place-items: center; color: var(--amber-2); box-shadow: var(--shadow);
+      position: relative;
+    }
+    .mark::after { content: ""; width: 16px; height: 16px; border: 2px solid var(--amber); border-radius: 50%; }
+    h1 { margin: 0; font-size: 18px; letter-spacing: 0; font-weight: 700; }
+    .sub { color: var(--muted); font-size: 12px; }
+    .status { display: flex; gap: 14px; align-items: center; color: var(--muted); }
+    .pulse {
+      width: 9px; height: 9px; border-radius: 50%; background: var(--ok);
+      box-shadow: 0 0 0 0 rgba(250, 204, 21, .55);
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse { 70% { box-shadow: 0 0 0 14px rgba(250, 204, 21, 0); } }
+    main {
+      height: calc(100vh - 72px);
+      padding: 18px;
+      display: grid;
+      grid-template-columns: minmax(270px, 320px) 1fr minmax(300px, 380px);
+      grid-template-rows: 190px 1fr;
+      gap: 14px;
+    }
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,.04);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .panel h2 {
+      margin: 0;
+      padding: 12px 14px;
+      color: var(--amber-2);
+      font-size: 12px;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--line);
+    }
+    .stats { grid-column: 1 / 4; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; background: transparent; border: 0; box-shadow: none; }
+    .stat {
+      border: 1px solid var(--line); border-radius: 10px; padding: 18px;
+      background: linear-gradient(145deg, rgba(40, 29, 12, .8), rgba(10, 8, 4, .72));
+    }
+    .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .stat .value { font-size: 30px; color: var(--amber-2); margin-top: 8px; font-variant-numeric: tabular-nums; }
+    .tree, .feed, .inspector { overflow: auto; height: calc(100% - 42px); padding: 12px; }
+    .node, .event, .detail {
+      border: 1px solid rgba(245, 158, 11, .2);
+      background: rgba(8, 7, 4, .48);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .node { cursor: pointer; }
+    .node.active { border-color: var(--line-strong); box-shadow: inset 3px 0 0 var(--amber); }
+    .node.child { margin-left: 18px; }
+    .title { color: var(--text); font-weight: 650; overflow-wrap: anywhere; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .event-type { color: var(--amber-2); font-size: 11px; text-transform: uppercase; }
+    .event-text { margin-top: 6px; overflow-wrap: anywhere; }
+    .graph {
+      height: calc(100% - 42px);
+      display: grid;
+      place-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .core {
+      width: 190px; height: 190px; border-radius: 50%;
+      border: 1px solid var(--line-strong);
+      display: grid; place-items: center; color: var(--amber-2);
+      background: radial-gradient(circle, rgba(251,191,36,.2), rgba(8,7,4,.1) 58%, transparent 60%);
+      box-shadow: 0 0 50px rgba(245,158,11,.25), inset 0 0 30px rgba(251,191,36,.08);
+    }
+    .core::before, .core::after {
+      content: ""; position: absolute; border: 1px solid rgba(251,191,36,.28); border-radius: 50%;
+      animation: rotate 18s linear infinite;
+    }
+    .core::before { width: 290px; height: 290px; }
+    .core::after { width: 390px; height: 390px; animation-direction: reverse; }
+    @keyframes rotate { to { transform: rotate(360deg); } }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #ffe9b0;
+      margin: 8px 0 0;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    @media (max-width: 1000px) {
+      body { overflow: auto; }
+      main { height: auto; grid-template-columns: 1fr; grid-template-rows: auto; }
+      .stats, .panel { grid-column: auto; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="mark"></div>
+      <div>
+        <h1>Aux Local Dashboard</h1>
+        <div class="sub">read-only agent observability</div>
+      </div>
+    </div>
+    <div class="status"><span class="pulse"></span><span id="connection">connecting</span><span id="mode"></span></div>
+  </header>
+  <main>
+    <section class="stats">
+      <div class="stat"><div class="label">Sessions</div><div class="value" id="sessionCount">0</div></div>
+      <div class="stat"><div class="label">Prompt Tokens</div><div class="value" id="promptTokens">0</div></div>
+      <div class="stat"><div class="label">Completion Tokens</div><div class="value" id="completionTokens">0</div></div>
+      <div class="stat"><div class="label">Cost</div><div class="value" id="cost">$0.00</div></div>
+    </section>
+    <section class="panel"><h2>Agent Tree</h2><div class="tree" id="tree"></div></section>
+    <section class="panel"><h2>Live Core</h2><div class="graph"><div class="core" id="core">AUX</div></div></section>
+    <section class="panel"><h2>Inspector</h2><div class="inspector" id="inspector"></div></section>
+    <section class="panel"><h2>Event Feed</h2><div class="feed" id="feed"></div></section>
+    <section class="panel"><h2>Logs</h2><div class="feed" id="logs"></div></section>
+  </main>
+  <script>
+    const token = new URLSearchParams(location.search).get("token") || "";
+    const state = { sessions: new Map(), selected: "", logs: [] };
+    const fmt = new Intl.NumberFormat();
+    const money = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 4 });
+    const api = (path) => `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+
+    function setText(id, value) { document.getElementById(id).textContent = value; }
+    function escapeHTML(value) {
+      return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function updateStats() {
+      const sessions = [...state.sessions.values()];
+      const stats = sessions.reduce((acc, s) => {
+        acc.prompt += s.promptTokens || 0; acc.completion += s.completionTokens || 0; acc.cost += s.cost || 0; return acc;
+      }, { prompt: 0, completion: 0, cost: 0 });
+      setText("sessionCount", sessions.length);
+      setText("promptTokens", fmt.format(stats.prompt));
+      setText("completionTokens", fmt.format(stats.completion));
+      setText("cost", money.format(stats.cost));
+      setText("core", sessions.some(s => (s.messageCount || 0) > 0) ? "LIVE" : "AUX");
+    }
+    function renderTree() {
+      const root = document.getElementById("tree");
+      const sessions = [...state.sessions.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      root.innerHTML = sessions.map(s => `
+        <div class="node ${s.id === state.selected ? "active" : ""} ${s.parentSessionId ? "child" : ""}" data-session="${escapeHTML(s.id)}">
+          <div class="title">${escapeHTML(s.title || "Untitled session")}</div>
+          <div class="meta">${escapeHTML(s.id.slice(0, 8))} · ${fmt.format((s.promptTokens || 0) + (s.completionTokens || 0))} tokens · ${money.format(s.cost || 0)}</div>
+        </div>`).join("") || `<div class="meta">No sessions yet.</div>`;
+      root.querySelectorAll("[data-session]").forEach(el => el.onclick = () => selectSession(el.dataset.session));
+    }
+    async function selectSession(id) {
+      state.selected = id;
+      renderTree();
+      const inspector = document.getElementById("inspector");
+      inspector.innerHTML = `<div class="meta">Loading session...</div>`;
+      const messages = await fetch(api(`/api/sessions/${encodeURIComponent(id)}/messages`)).then(r => r.json());
+      inspector.innerHTML = messages.map(renderMessage).join("") || `<div class="meta">No messages.</div>`;
+    }
+    function renderMessage(m) {
+      const tools = (m.tools || []).map(t => `<div class="meta">tool: ${escapeHTML(t.name)} ${t.finished ? "done" : "running"}</div><pre>${escapeHTML(t.input || "")}</pre>`).join("");
+      const results = (m.results || []).map(r => `<div class="meta">result: ${escapeHTML(r.name || r.toolCallId)} ${r.isError ? "error" : "ok"}</div><pre>${escapeHTML(r.content || "")}</pre>`).join("");
+      return `<div class="detail"><div class="event-type">${escapeHTML(m.role)} ${escapeHTML(m.finish || "")}</div><div class="event-text">${escapeHTML(m.text || "")}</div>${tools}${results}</div>`;
+    }
+    function pushFeed(event) {
+      const feed = document.getElementById("feed");
+      const text = event.data?.text || event.data?.progress || event.data?.title || event.data?.path || event.data?.message || "";
+      feed.insertAdjacentHTML("afterbegin", `<div class="event"><div class="event-type">${escapeHTML(event.type)}</div><div class="event-text">${escapeHTML(text)}</div></div>`);
+      while (feed.children.length > 80) feed.lastElementChild.remove();
+    }
+    function renderLogs() {
+      const logs = document.getElementById("logs");
+      logs.innerHTML = state.logs.slice(-80).reverse().map(l => `<div class="event"><div class="event-type">${escapeHTML(l.level || "log")}</div><div class="event-text">${escapeHTML(l.message || "")}</div></div>`).join("");
+    }
+    function applyEvent(event) {
+      if (event.type.startsWith("session.")) state.sessions.set(event.data.id, event.data);
+      if (event.type === "session.deleted") state.sessions.delete(event.data.id);
+      if (event.type.startsWith("log.")) { state.logs.push(event.data); renderLogs(); }
+      updateStats(); renderTree(); pushFeed(event);
+      if (state.selected && event.type.startsWith("message.") && event.data.sessionId === state.selected) selectSession(state.selected);
+    }
+    async function boot() {
+      if (!token) { setText("connection", "missing token"); return; }
+      const snapshot = await fetch(api("/api/snapshot")).then(r => {
+        if (!r.ok) throw new Error("unauthorized");
+        return r.json();
+      });
+      setText("mode", snapshot.mode);
+      snapshot.sessions.forEach(s => state.sessions.set(s.id, s));
+      state.logs = snapshot.logs || [];
+      updateStats(); renderTree(); renderLogs();
+      const first = [...state.sessions.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+      if (first) selectSession(first.id);
+      const events = new EventSource(api("/events"));
+      events.onopen = () => setText("connection", "connected");
+      events.onerror = () => setText("connection", "reconnecting");
+      events.onmessage = msg => applyEvent(JSON.parse(msg.data));
+      ["session.created","session.updated","session.deleted","message.created","message.updated","message.deleted","agent.created","agent.updated","log.created","history.created","history.updated","history.deleted","dashboard.resync"].forEach(type => {
+        events.addEventListener(type, msg => applyEvent(JSON.parse(msg.data)));
+      });
+    }
+    boot().catch(err => setText("connection", err.message));
+  </script>
+</body>
+</html>
