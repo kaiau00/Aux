@@ -75,7 +75,17 @@ type localModel struct {
 }
 
 func listLocalModels(modelsEndpoint string) []localModel {
-	res, err := http.Get(modelsEndpoint)
+	req, err := http.NewRequest(http.MethodGet, modelsEndpoint, nil)
+	if err != nil {
+		logging.Debug("Failed to build local-models request", "error", err)
+		return []localModel{}
+	}
+	// local.go init() runs before viper is configured, so read the API
+	// key from the env var (viper prefix AUX_ + underscored path).
+	if apiKey := os.Getenv("AUX_PROVIDERS_LOCAL_APIKEY"); apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logging.Debug("Failed to list local models",
 			"error", err,
