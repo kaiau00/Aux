@@ -41,6 +41,25 @@ type messagesCmp struct {
 	// full reasoning block. The default is a short preview of the latest
 	// lines; Tab toggles the focused message.
 	expandedThinking map[string]bool
+
+	// workingLabelIndex advances on spinner ticks to rotate status verbs.
+	workingLabelIndex int
+}
+
+// workingStatusLabels cycles in the footer while the agent is responding,
+// similar to Claude Code's rotating "Working / Searching / …" indicator.
+var workingStatusLabels = []string{
+	"Working",
+	"Thinking",
+	"Searching",
+	"Finding",
+	"Pondering",
+	"Considering",
+	"Exploring",
+	"Drafting",
+	"Planning",
+	"Reading",
+	"Analyzing",
 }
 type renderFinishedMsg struct{}
 
@@ -185,6 +204,9 @@ func (m *messagesCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if _, ok := msg.(spinner.TickMsg); ok && m.IsAgentWorking() {
+		m.workingLabelIndex++
+	}
 	spinner, cmd := m.spinner.Update(msg)
 	m.spinner = spinner
 	cmds = append(cmds, cmd)
@@ -387,21 +409,24 @@ func hasUnfinishedToolCalls(messages []message.Message) bool {
 	return false
 }
 
+func (m *messagesCmp) workingStatusLabel() string {
+	if hasToolsWithoutResponse(m.messages) {
+		return "Waiting for tool response..."
+	}
+	if hasUnfinishedToolCalls(m.messages) {
+		return "Building tool call..."
+	}
+	idx := (m.workingLabelIndex / 12) % len(workingStatusLabels)
+	return workingStatusLabels[idx] + "..."
+}
+
 func (m *messagesCmp) working() string {
 	text := ""
 	if m.IsAgentWorking() && len(m.messages) > 0 {
 		t := theme.CurrentTheme()
 		baseStyle := styles.BaseStyle()
 
-		task := "Thinking..."
-		lastMessage := m.messages[len(m.messages)-1]
-		if hasToolsWithoutResponse(m.messages) {
-			task = "Waiting for tool response..."
-		} else if hasUnfinishedToolCalls(m.messages) {
-			task = "Building tool call..."
-		} else if !lastMessage.IsFinished() {
-			task = "Generating..."
-		}
+		task := m.workingStatusLabel()
 		if task != "" {
 			text += baseStyle.
 				Width(m.width).
