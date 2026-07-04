@@ -70,7 +70,7 @@ func loadLocalModelsFromEndpoint(endpoint string) ([]localModel, error) {
 		return nil, nil
 	}
 
-	loadLocalModels(models)
+	loadLocalModels(models, endpoint)
 	viper.SetDefault("providers.local.apiKey", "dummy")
 	ProviderPopularity[ProviderLocal] = 0
 	return models, nil
@@ -91,6 +91,8 @@ type localModel struct {
 	State               string `json:"state"`
 	MaxContextLength    int64  `json:"max_context_length"`
 	LoadedContextLength int64  `json:"loaded_context_length"`
+	ContextLength       int64  `json:"context_length"`
+	ContextWindow       int64  `json:"context_window"`
 }
 
 func listLocalModels(modelsEndpoint string) []localModel {
@@ -152,9 +154,9 @@ func listLocalModels(modelsEndpoint string) []localModel {
 	return supportedModels
 }
 
-func loadLocalModels(models []localModel) {
+func loadLocalModels(models []localModel, endpoint string) {
 	for i, m := range models {
-		model := convertLocalModel(m)
+		model := convertLocalModel(m, endpoint)
 		SupportedModels[model.ID] = model
 
 		if i == 0 || m.State == "loaded" {
@@ -166,17 +168,51 @@ func loadLocalModels(models []localModel) {
 	}
 }
 
-func convertLocalModel(model localModel) Model {
+func convertLocalModel(model localModel, endpoint string) Model {
+	contextWindow, defaultMaxTokens := resolveLocalModelLimits(model, endpoint)
 	return Model{
 		ID:                  ModelID("local." + model.ID),
 		Name:                friendlyModelName(model.ID),
 		Provider:            ProviderLocal,
 		APIModel:            model.ID,
-		ContextWindow:       cmp.Or(model.LoadedContextLength, 4096),
-		DefaultMaxTokens:    cmp.Or(model.LoadedContextLength, 4096),
+		ContextWindow:       contextWindow,
+		DefaultMaxTokens:    defaultMaxTokens,
 		CanReason:           true,
 		SupportsAttachments: true,
 	}
+}
+
+func resolveLocalModelLimits(model localModel, endpoint string) (contextWindow, defaultMaxTokens int64) {
+	contextWindow = cmp.Or(
+		model.LoadedContextLength,
+		model.MaxContextLength,
+		model.ContextLength,
+		model.ContextWindow,
+	)
+
+	catalogFound := false
+	var catalog catalogLimits
+	if limits, ok := lookupModelsDevLimits(endpoint, model.ID); ok {
+		catalogFound = true
+		catalog = limits
+		if contextWindow <= 0 && limits.Context > 0 {
+			contextWindow = limits.Context
+		}
+	}
+
+	if contextWindow <= 0 {
+		contextWindow = 4096
+	}
+
+	defaultMaxTokens = cmp.Or(model.LoadedContextLength, model.MaxContextLength)
+	if defaultMaxTokens <= 0 && catalogFound && catalog.Output > 0 {
+		defaultMaxTokens = catalog.Output
+	}
+	if defaultMaxTokens <= 0 {
+		defaultMaxTokens = 4096
+	}
+
+	return contextWindow, defaultMaxTokens
 }
 
 var modelInfoRegex = regexp.MustCompile(`(?i)^([a-z0-9]+)(?:[-_]?([rv]?\d[\.\d]*))?(?:[-_]?([a-z]+))?.*`)
