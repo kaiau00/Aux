@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go"
@@ -182,6 +183,14 @@ func (o *openaiClient) preparedParams(messages []openai.ChatCompletionMessagePar
 		params.MaxTokens = openai.Int(o.providerOptions.maxTokens)
 	}
 
+	// MiniMax and other OpenAI-compatible reasoning endpoints expose thinking
+	// in reasoning_content / reasoning_details when this flag is set.
+	if o.providerOptions.model.Provider == models.ProviderLocal && o.providerOptions.model.CanReason {
+		params.WithExtraFields(map[string]any{
+			"reasoning_split": true,
+		})
+	}
+
 	return params
 }
 
@@ -264,12 +273,19 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 			acc := openai.ChatCompletionAccumulator{}
 			currentContent := ""
 			toolCalls := make([]message.ToolCall, 0)
+			var reasoningState reasoningStreamState
 
 			for openaiStream.Next() {
 				chunk := openaiStream.Current()
 				acc.AddChunk(chunk)
 
 				for _, choice := range chunk.Choices {
+					if thinking := reasoningDelta(choice.Delta, &reasoningState); thinking != "" {
+						eventChan <- ProviderEvent{
+							Type:     EventThinkingDelta,
+							Thinking: thinking,
+						}
+					}
 					if choice.Delta.Content != "" {
 						eventChan <- ProviderEvent{
 							Type:    EventContentDelta,
@@ -422,4 +438,72 @@ func WithReasoningEffort(effort string) OpenAIOption {
 		}
 		options.reasoningEffort = defaultReasoningEffort
 	}
+}
+
+type reasoningStreamState struct {
+	detailsBuffer string
+}
+
+func reasoningDelta(delta openai.ChatCompletionChunkChoiceDelta, state *reasoningStreamState) string {
+	var out strings.Builder
+
+	if field, ok := delta.JSON.ExtraFields["reasoning_content"]; ok {
+		if text := jsonFieldString(field.Raw()); text != "" {
+			out.WriteString(text)
+		}
+	}
+
+	if field, ok := delta.JSON.ExtraFields["reasoning_details"]; ok && field.IsPresent() && !field.IsExplicitNull() {
+		full := reasoningDetailsText(field.Raw())
+		if len(full) > len(state.detailsBuffer) {
+			out.WriteString(full[len(state.detailsBuffer):])
+			state.detailsBuffer = full
+		}
+	}
+
+	return out.String()
+}
+
+func reasoningFromMessage(msg openai.ChatCompletionMessage) string {
+	var parts []string
+
+	if field, ok := msg.JSON.ExtraFields["reasoning_content"]; ok {
+		if text := jsonFieldString(field.Raw()); text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	if field, ok := msg.JSON.ExtraFields["reasoning_details"]; ok && field.IsPresent() && !field.IsExplicitNull() {
+		if text := reasoningDetailsText(field.Raw()); text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	return strings.Join(parts, "")
+}
+
+func reasoningDetailsText(raw string) string {
+	var details []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(raw), &details); err != nil {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, detail := range details {
+		b.WriteString(detail.Text)
+	}
+	return b.String()
+}
+
+func jsonFieldString(raw string) string {
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return ""
+	}
+	return value
 }

@@ -45,10 +45,11 @@ type messagesCmp struct {
 type renderFinishedMsg struct{}
 
 type MessageKeys struct {
-	PageDown     key.Binding
-	PageUp       key.Binding
-	HalfPageUp   key.Binding
-	HalfPageDown key.Binding
+	PageDown        key.Binding
+	PageUp          key.Binding
+	HalfPageUp      key.Binding
+	HalfPageDown    key.Binding
+	ToggleThinking  key.Binding
 }
 
 var messageKeys = MessageKeys{
@@ -67,6 +68,10 @@ var messageKeys = MessageKeys{
 	HalfPageDown: key.NewBinding(
 		key.WithKeys("ctrl+d"),
 		key.WithHelp("ctrl+d", "½ page down"),
+	),
+	ToggleThinking: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "toggle reasoning"),
 	),
 }
 
@@ -104,11 +109,14 @@ func (m *messagesCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport = u
 			cmds = append(cmds, cmd)
 		}
-		if msg.String() == "tab" && m.currentMsgID != "" {
-			m.expandedThinking[m.currentMsgID] = !m.expandedThinking[m.currentMsgID]
-			delete(m.cachedContent, m.currentMsgID)
-			m.renderView()
-			return m, tea.Batch(cmds...)
+		if key.Matches(msg, messageKeys.ToggleThinking) {
+			if targetID := m.reasoningToggleTargetID(); targetID != "" {
+				m.expandedThinking[targetID] = !m.expandedThinking[targetID]
+				m.currentMsgID = targetID
+				delete(m.cachedContent, targetID)
+				m.renderView()
+				return m, tea.Batch(cmds...)
+			}
 		}
 
 	case renderFinishedMsg:
@@ -181,6 +189,23 @@ func (m *messagesCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.spinner = spinner
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
+}
+
+func (m *messagesCmp) reasoningToggleTargetID() string {
+	start := len(m.messages) - 1
+	for i, msg := range m.messages {
+		if msg.ID == m.currentMsgID {
+			start = i
+			break
+		}
+	}
+	for i := start; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == message.Assistant && msg.ReasoningContent().Thinking != "" {
+			return msg.ID
+		}
+	}
+	return ""
 }
 
 func (m *messagesCmp) IsAgentWorking() bool {
@@ -478,6 +503,7 @@ func (m *messagesCmp) SetSession(session session.Session) tea.Cmd {
 
 func (m *messagesCmp) BindingKeys() []key.Binding {
 	return []key.Binding{
+		messageKeys.ToggleThinking,
 		m.viewport.KeyMap.PageDown,
 		m.viewport.KeyMap.PageUp,
 		m.viewport.KeyMap.HalfPageUp,

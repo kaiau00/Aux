@@ -176,37 +176,45 @@ func renderAssistantMessage(
 		}
 	}
 	if thinkingContent != "" {
-		var thinkingRendered string
 		if thinkingExpanded {
 			collapseHint := baseStyle.
 				Width(width - 1).
 				Foreground(t.TextMuted()).
 				Render(" ↑ Tab to collapse")
-			thinkingRendered = renderMessage(
+			thinkingRendered := renderMessage(
 				thinkingContent,
 				false,
 				msg.ID == focusedUIMessageId,
 				width,
 				collapseHint,
 			)
-		} else {
-			thinkingRendered = renderThinkingPreview(
+			thinkingMsg := uiMessage{
+				ID:          msg.ID,
+				messageType: assistantMessageType,
+				position:    position,
+				height:      lipgloss.Height(thinkingRendered),
+				content:     thinkingRendered,
+			}
+			messages = append(messages, thinkingMsg)
+			position += thinkingMsg.height
+			position++ // for the space
+		} else if msg.IsThinking() {
+			thinkingRendered := renderThinkingPreview(
 				thinkingContent,
 				spinnerFrame,
 				width,
-				msg.IsThinking(),
 			)
+			thinkingMsg := uiMessage{
+				ID:          msg.ID,
+				messageType: assistantMessageType,
+				position:    position,
+				height:      lipgloss.Height(thinkingRendered),
+				content:     thinkingRendered,
+			}
+			messages = append(messages, thinkingMsg)
+			position += thinkingMsg.height
+			position++ // for the space
 		}
-		thinkingMsg := uiMessage{
-			ID:          msg.ID,
-			messageType: assistantMessageType,
-			position:    position,
-			height:      lipgloss.Height(thinkingRendered),
-			content:     thinkingRendered,
-		}
-		messages = append(messages, thinkingMsg)
-		position += thinkingMsg.height
-		position++ // for the space
 	}
 	if content != "" || (finished && finishData.Reason == message.FinishReasonEndTurn) {
 		if content == "" {
@@ -214,6 +222,12 @@ func renderAssistantMessage(
 		}
 		if isSummary {
 			info = append(info, baseStyle.Width(width-1).Foreground(t.TextMuted()).Render(" (summary)"))
+		}
+		if thinkingContent != "" && !thinkingExpanded && !msg.IsThinking() {
+			info = append(info, baseStyle.
+				Width(width-1).
+				Foreground(t.TextMuted()).
+				Render(" Tab to show reasoning"))
 		}
 
 		content = renderMessage(content, false, true, width, info...)
@@ -699,9 +713,10 @@ func formatTimestampDiff(start, end int64) string {
 	return fmt.Sprintf("%.1fm", diffSeconds/60)
 }
 
-// renderThinkingPreview shows the latest few lines of a reasoning block.
-// The full thought stream stays hidden until the user expands it with Tab.
-func renderThinkingPreview(thinkingContent, spinnerFrame string, width int, stillThinking bool) string {
+// renderThinkingPreview shows the latest few lines while the model is still
+// reasoning. Once the response text arrives the block is hidden entirely
+// until the user expands it with Tab on the focused message.
+func renderThinkingPreview(thinkingContent, spinnerFrame string, width int) string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -712,25 +727,21 @@ func renderThinkingPreview(thinkingContent, spinnerFrame string, width int, stil
 		BorderForeground(t.Primary()).
 		PaddingLeft(1)
 
-	parts := []string{}
-	if stillThinking {
-		spinnerStyle := baseStyle.Foreground(t.Primary()).Bold(true)
-		labelStyle := baseStyle.Foreground(t.TextMuted()).Italic(true)
-		parts = append(parts, lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			spinnerStyle.Render(spinnerFrame),
-			labelStyle.Render(" thinking"),
-		))
-	}
+	spinnerStyle := baseStyle.Foreground(t.Primary()).Bold(true)
+	labelStyle := baseStyle.Foreground(t.TextMuted()).Italic(true)
+	parts := []string{lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		spinnerStyle.Render(spinnerFrame),
+		labelStyle.Render(" thinking"),
+	)}
 
-	preview := lastLines(thinkingContent, thinkingPreviewLines)
-	if preview != "" {
+	if preview := lastLines(thinkingContent, thinkingPreviewLines); preview != "" {
 		previewStyle := baseStyle.
 			Foreground(t.TextMuted()).
 			Italic(true).
 			Width(width - 4)
 		parts = append(parts, previewStyle.Render(preview))
-	} else if stillThinking {
+	} else {
 		parts = append(parts, baseStyle.
 			Foreground(t.TextMuted()).
 			Italic(true).
