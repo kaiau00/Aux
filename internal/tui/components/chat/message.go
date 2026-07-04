@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/diff"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
@@ -18,6 +16,8 @@ import (
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type uiMessageType int
@@ -27,8 +27,7 @@ const (
 	assistantMessageType
 	toolMessageType
 
-	maxResultHeight      = 10
-	thinkingPreviewLines = 2
+	maxResultHeight = 10
 )
 
 type uiMessage struct {
@@ -140,6 +139,14 @@ func renderAssistantMessage(
 	thinkingContent := msg.ReasoningContent().Thinking
 	finished := msg.IsFinished()
 	finishData := msg.FinishPart()
+	toolCalls := msg.ToolCalls()
+	showAsFinalResponse := isUserVisibleAssistantResponse(msg)
+	hiddenResponseContent := ""
+	if content != "" && !showAsFinalResponse {
+		hiddenResponseContent = content
+		content = ""
+	}
+	hasReasoningDetails := thinkingContent != "" || hiddenResponseContent != "" || len(toolCalls) > 0
 	info := []string{}
 
 	t := theme.CurrentTheme()
@@ -175,55 +182,54 @@ func renderAssistantMessage(
 			)
 		}
 	}
-	if thinkingContent != "" {
+	if hasReasoningDetails {
 		if thinkingExpanded {
-			collapseHint := baseStyle.
-				Width(width - 1).
-				Foreground(t.TextMuted()).
-				Render(" ↑ Tab to collapse")
-			thinkingRendered := renderMessage(
+			reasoningRendered := renderReasoningDetails(
+				msg.ID,
+				focusedUIMessageId,
 				thinkingContent,
-				false,
-				msg.ID == focusedUIMessageId,
+				hiddenResponseContent,
+				toolCalls,
+				allMessages,
+				messagesService,
 				width,
-				collapseHint,
 			)
-			thinkingMsg := uiMessage{
+			reasoningMsg := uiMessage{
 				ID:          msg.ID,
 				messageType: assistantMessageType,
 				position:    position,
-				height:      lipgloss.Height(thinkingRendered),
-				content:     thinkingRendered,
+				height:      lipgloss.Height(reasoningRendered),
+				content:     reasoningRendered,
 			}
-			messages = append(messages, thinkingMsg)
-			position += thinkingMsg.height
+			messages = append(messages, reasoningMsg)
+			position += reasoningMsg.height
 			position++ // for the space
-		} else if msg.IsThinking() {
-			thinkingRendered := renderThinkingPreview(
+		} else if msg.IsThinking() || content == "" {
+			reasoningPreview := renderReasoningPreview(
 				thinkingContent,
-				spinnerFrame,
 				width,
+				spinnerFrame,
 			)
-			thinkingMsg := uiMessage{
+			reasoningMsg := uiMessage{
 				ID:          msg.ID,
 				messageType: assistantMessageType,
 				position:    position,
-				height:      lipgloss.Height(thinkingRendered),
-				content:     thinkingRendered,
+				height:      lipgloss.Height(reasoningPreview),
+				content:     reasoningPreview,
 			}
-			messages = append(messages, thinkingMsg)
-			position += thinkingMsg.height
+			messages = append(messages, reasoningMsg)
+			position += reasoningMsg.height
 			position++ // for the space
 		}
 	}
-	if content != "" || (finished && finishData.Reason == message.FinishReasonEndTurn) {
+	if content != "" || (showAsFinalResponse && finished && finishData.Reason == message.FinishReasonEndTurn) {
 		if content == "" {
 			content = "*Finished without output*"
 		}
 		if isSummary {
 			info = append(info, baseStyle.Width(width-1).Foreground(t.TextMuted()).Render(" (summary)"))
 		}
-		if thinkingContent != "" && !thinkingExpanded && !msg.IsThinking() {
+		if hasReasoningDetails && !thinkingExpanded && !msg.IsThinking() {
 			info = append(info, baseStyle.
 				Width(width-1).
 				Foreground(t.TextMuted()).
@@ -242,8 +248,73 @@ func renderAssistantMessage(
 		position += responseMsg.height
 		position++ // for the space
 	}
+	return messages
+}
 
-	for i, toolCall := range msg.ToolCalls() {
+func isUserVisibleAssistantResponse(msg message.Message) bool {
+	if len(msg.ToolCalls()) > 0 {
+		return false
+	}
+	if finish := msg.FinishPart(); finish != nil {
+		return finish.Reason != message.FinishReasonToolUse
+	}
+	return true
+}
+
+func hasReasoningDetails(msg message.Message) bool {
+	if msg.ReasoningContent().Thinking != "" {
+		return true
+	}
+	if msg.Content().String() != "" && !isUserVisibleAssistantResponse(msg) {
+		return true
+	}
+	return len(msg.ToolCalls()) > 0
+}
+
+func renderReasoningDetails(
+	msgID string,
+	focusedUIMessageId string,
+	thinkingContent string,
+	hiddenResponseContent string,
+	toolCalls []message.ToolCall,
+	allMessages []message.Message,
+	messagesService message.Service,
+	width int,
+) string {
+	t := theme.CurrentTheme()
+	baseStyle := styles.BaseStyle()
+	bg := t.Background()
+
+	style := baseStyle.
+		Width(width - 1).
+		BorderLeft(true).
+		Foreground(t.TextMuted()).
+		BorderForeground(t.Primary()).
+		BorderStyle(lipgloss.ThickBorder())
+
+	parts := []string{}
+
+	if thinkingContent != "" {
+		parts = append(parts, baseStyle.
+			Width(width-1).
+			Foreground(t.TextMuted()).
+			Render("Thinking"))
+		parts = append(parts, styles.ForceReplaceBackgroundWithLipgloss(
+			toMarkdown(thinkingContent, msgID == focusedUIMessageId, width),
+			bg,
+		))
+	}
+	if hiddenResponseContent != "" {
+		parts = append(parts, baseStyle.
+			Width(width-1).
+			Foreground(t.TextMuted()).
+			Render("Intermediate response"))
+		parts = append(parts, styles.ForceReplaceBackgroundWithLipgloss(
+			toMarkdown(hiddenResponseContent, msgID == focusedUIMessageId, width),
+			bg,
+		))
+	}
+	for i, toolCall := range toolCalls {
 		toolCallContent := renderToolMessage(
 			toolCall,
 			allMessages,
@@ -252,13 +323,19 @@ func renderAssistantMessage(
 			false,
 			width,
 			i+1,
-			thinkingExpanded,
+			true,
 		)
-		messages = append(messages, toolCallContent)
-		position += toolCallContent.height
-		position++ // for the space
+		parts = append(parts, toolCallContent.content)
 	}
-	return messages
+	if len(parts) == 0 {
+		parts = append(parts, "Working...")
+	}
+	parts = append(parts, baseStyle.
+		Width(width-1).
+		Foreground(t.TextMuted()).
+		Render(" ↑ Tab to collapse"))
+
+	return style.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
 func findToolResponse(toolCallID string, futureMessages []message.Message) *message.ToolResult {
@@ -754,10 +831,9 @@ func formatTimestampDiff(start, end int64) string {
 	return fmt.Sprintf("%.1fm", diffSeconds/60)
 }
 
-// renderThinkingPreview shows the latest few lines while the model is still
-// reasoning. Once the response text arrives the block is hidden entirely
-// until the user expands it with Tab on the focused message.
-func renderThinkingPreview(thinkingContent, spinnerFrame string, width int) string {
+// renderReasoningPreview keeps hidden agent internals discoverable without
+// showing thoughts, tool details, or intermediate drafts in the main transcript.
+func renderReasoningPreview(thinkingContent string, width int, spinnerFrame string) string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -773,20 +849,14 @@ func renderThinkingPreview(thinkingContent, spinnerFrame string, width int) stri
 	parts := []string{lipgloss.JoinHorizontal(
 		lipgloss.Left,
 		spinnerStyle.Render(spinnerFrame),
-		labelStyle.Render(" thinking"),
+		labelStyle.Render(" reasoning hidden"),
 	)}
 
-	if preview := lastLines(thinkingContent, thinkingPreviewLines); preview != "" {
-		previewStyle := baseStyle.
-			Foreground(t.TextMuted()).
-			Italic(true).
-			Width(width - 4)
-		parts = append(parts, previewStyle.Render(preview))
-	} else {
+	if thinkingContent == "" {
 		parts = append(parts, baseStyle.
 			Foreground(t.TextMuted()).
 			Italic(true).
-			Render("Aux is analyzing…"))
+			Render("Aux is working..."))
 	}
 
 	parts = append(parts, baseStyle.
@@ -794,16 +864,4 @@ func renderThinkingPreview(thinkingContent, spinnerFrame string, width int) stri
 		Render("↓ Tab to expand"))
 
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
-}
-
-func lastLines(text string, n int) string {
-	text = strings.TrimRight(text, "\n")
-	if text == "" || n <= 0 {
-		return ""
-	}
-	lines := strings.Split(text, "\n")
-	if len(lines) <= n {
-		return text
-	}
-	return strings.Join(lines[len(lines)-n:], "\n")
 }

@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
@@ -22,6 +19,9 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/page"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type keyMap struct {
@@ -175,13 +175,6 @@ func (a appModel) Init() tea.Cmd {
 		}
 		return dialog.ShowInitDialogMsg{Show: shouldShow}
 	})
-
-	// If this is a first-boot launch, select the welcome session so the
-	// intro message is rendered immediately.
-	if a.app.BootstrapSession.ID != "" {
-		a.selectedSession = a.app.BootstrapSession
-		cmds = append(cmds, util.CmdHandler(chat.SessionSelectedMsg(a.selectedSession)))
-	}
 
 	return tea.Batch(cmds...)
 }

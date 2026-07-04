@@ -10,9 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/message"
@@ -20,6 +17,9 @@ import (
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ContextEntry represents a single file currently loaded into the agent's
@@ -27,15 +27,15 @@ import (
 // directory); the line count is the number of lines the agent actually
 // received, not the file's total length.
 type ContextEntry struct {
-	Path        string
-	AbsPath     string
-	Lines       int
-	Score       float64
-	Reason      string
-	CrossedOff  bool
-	ReadAt      time.Time
-	MessageID   string
-	ToolCallID  string
+	Path       string
+	AbsPath    string
+	Lines      int
+	Score      float64
+	Reason     string
+	CrossedOff bool
+	ReadAt     time.Time
+	MessageID  string
+	ToolCallID string
 }
 
 type ContextPaneCmp struct {
@@ -43,11 +43,11 @@ type ContextPaneCmp struct {
 	width  int
 	height int
 
-	mu         sync.Mutex
-	sessionID  string
-	entries    []ContextEntry
-	selected   int
-	offset     int
+	mu        sync.Mutex
+	sessionID string
+	entries   []ContextEntry
+	selected  int
+	offset    int
 
 	// editorFocused suppresses pane hotkeys while the editor textarea is
 	// active so the user can type x/u/c/j/k without triggering context
@@ -303,6 +303,7 @@ func (m *ContextPaneCmp) View() string {
 		Foreground(t.Primary()).
 		Bold(true).
 		Render(fmt.Sprintf(" Context (%d)", len(entries)))
+	dashboard := m.dashboardView()
 
 	footer := baseStyle.
 		Width(m.width).
@@ -321,6 +322,8 @@ func (m *ContextPaneCmp) View() string {
 			Render(
 				lipgloss.JoinVertical(
 					lipgloss.Left,
+					dashboard,
+					" ",
 					header,
 					" ",
 					empty,
@@ -330,7 +333,7 @@ func (m *ContextPaneCmp) View() string {
 			)
 	}
 
-	bodyHeight := m.height - 4
+	bodyHeight := m.height - lipgloss.Height(dashboard) - 5
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -360,12 +363,44 @@ func (m *ContextPaneCmp) View() string {
 		Render(
 			lipgloss.JoinVertical(
 				lipgloss.Left,
+				dashboard,
+				" ",
 				header,
 				lipgloss.JoinVertical(lipgloss.Left, rows...),
 				" ",
 				footer,
 			),
 		)
+}
+
+func (m *ContextPaneCmp) dashboardView() string {
+	t := theme.CurrentTheme()
+	baseStyle := styles.BaseStyle()
+
+	label := baseStyle.
+		Foreground(t.Primary()).
+		Bold(true).
+		Render(" Dashboard")
+
+	value := "disabled"
+	if m.app != nil && m.app.Dashboard != nil && m.app.Dashboard.URL() != "" {
+		value = m.app.Dashboard.URL()
+	}
+
+	availableWidth := m.width - lipgloss.Width(label) - 1
+	if availableWidth < 4 {
+		availableWidth = 4
+	}
+	value = ansiTruncate(value, availableWidth, "…")
+
+	return baseStyle.
+		Width(m.width).
+		Render(lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			label,
+			" ",
+			baseStyle.Foreground(t.TextMuted()).Render(value),
+		))
 }
 
 func (m *ContextPaneCmp) renderRow(e ContextEntry, selected bool, width int) string {

@@ -5,11 +5,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
@@ -18,6 +13,11 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type cacheItem struct {
@@ -61,14 +61,15 @@ var workingStatusLabels = []string{
 	"Reading",
 	"Analyzing",
 }
+
 type renderFinishedMsg struct{}
 
 type MessageKeys struct {
-	PageDown        key.Binding
-	PageUp          key.Binding
-	HalfPageUp      key.Binding
-	HalfPageDown    key.Binding
-	ToggleThinking  key.Binding
+	PageDown       key.Binding
+	PageUp         key.Binding
+	HalfPageUp     key.Binding
+	HalfPageDown   key.Binding
+	ToggleThinking key.Binding
 }
 
 var messageKeys = MessageKeys{
@@ -223,7 +224,7 @@ func (m *messagesCmp) reasoningToggleTargetID() string {
 	}
 	for i := start; i >= 0; i-- {
 		msg := m.messages[i]
-		if msg.Role == message.Assistant && msg.ReasoningContent().Thinking != "" {
+		if msg.Role == message.Assistant && hasReasoningDetails(msg) {
 			return msg.ID
 		}
 	}
@@ -485,11 +486,25 @@ func (m *messagesCmp) help() string {
 
 func (m *messagesCmp) initialScreen() string {
 	baseStyle := styles.BaseStyle()
+	t := theme.CurrentTheme()
+
+	greeting := baseStyle.
+		Width(m.width).
+		Foreground(t.Text()).
+		Render("Hello, I am Aux. How can I help?")
+
+	prompt := baseStyle.
+		Width(m.width).
+		Foreground(t.TextMuted()).
+		Render("Ask me to inspect this project, make a change, debug an error, or explain what you are looking at.")
 
 	return baseStyle.Width(m.width).Render(
 		lipgloss.JoinVertical(
 			lipgloss.Top,
 			header(m.width),
+			"",
+			greeting,
+			prompt,
 			"",
 			lspsConfigured(m.width),
 		),
@@ -562,11 +577,11 @@ func NewMessagesCmp(app *app.App) tea.Model {
 	vp.KeyMap.HalfPageUp = messageKeys.HalfPageUp
 	vp.KeyMap.HalfPageDown = messageKeys.HalfPageDown
 	return &messagesCmp{
-		app:               app,
-		cachedContent:     make(map[string]cacheItem),
-		viewport:          vp,
-		spinner:           s,
-		attachments:       attachmets,
-		expandedThinking:  make(map[string]bool),
+		app:              app,
+		cachedContent:    make(map[string]cacheItem),
+		viewport:         vp,
+		spinner:          s,
+		attachments:      attachmets,
+		expandedThinking: make(map[string]bool),
 	}
 }
