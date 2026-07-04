@@ -126,6 +126,7 @@ func renderAssistantMessage(
 	msg message.Message,
 	msgIndex int,
 	allMessages []message.Message, // we need this to get tool results and the user message
+	reasoningMessages []message.Message,
 	messagesService message.Service, // We need this to get the task tool messages
 	focusedUIMessageId string,
 	isSummary bool,
@@ -136,17 +137,13 @@ func renderAssistantMessage(
 ) []uiMessage {
 	messages := []uiMessage{}
 	content := msg.Content().String()
-	thinkingContent := msg.ReasoningContent().Thinking
 	finished := msg.IsFinished()
 	finishData := msg.FinishPart()
-	toolCalls := msg.ToolCalls()
 	showAsFinalResponse := isUserVisibleAssistantResponse(msg)
-	hiddenResponseContent := ""
-	if content != "" && !showAsFinalResponse {
-		hiddenResponseContent = content
+	if !showAsFinalResponse {
 		content = ""
 	}
-	hasReasoningDetails := thinkingContent != "" || hiddenResponseContent != "" || len(toolCalls) > 0
+	hasReasoningDetails := hasAnyReasoningDetails(reasoningMessages)
 	info := []string{}
 
 	t := theme.CurrentTheme()
@@ -187,9 +184,7 @@ func renderAssistantMessage(
 			reasoningRendered := renderReasoningDetails(
 				msg.ID,
 				focusedUIMessageId,
-				thinkingContent,
-				hiddenResponseContent,
-				toolCalls,
+				reasoningMessages,
 				allMessages,
 				messagesService,
 				width,
@@ -206,7 +201,6 @@ func renderAssistantMessage(
 			position++ // for the space
 		} else if msg.IsThinking() || content == "" {
 			reasoningPreview := renderReasoningPreview(
-				thinkingContent,
 				width,
 				spinnerFrame,
 			)
@@ -271,12 +265,19 @@ func hasReasoningDetails(msg message.Message) bool {
 	return len(msg.ToolCalls()) > 0
 }
 
+func hasAnyReasoningDetails(messages []message.Message) bool {
+	for _, msg := range messages {
+		if hasReasoningDetails(msg) {
+			return true
+		}
+	}
+	return false
+}
+
 func renderReasoningDetails(
 	msgID string,
 	focusedUIMessageId string,
-	thinkingContent string,
-	hiddenResponseContent string,
-	toolCalls []message.ToolCall,
+	reasoningMessages []message.Message,
 	allMessages []message.Message,
 	messagesService message.Service,
 	width int,
@@ -294,38 +295,43 @@ func renderReasoningDetails(
 
 	parts := []string{}
 
-	if thinkingContent != "" {
-		parts = append(parts, baseStyle.
-			Width(width-1).
-			Foreground(t.TextMuted()).
-			Render("Thinking"))
-		parts = append(parts, styles.ForceReplaceBackgroundWithLipgloss(
-			toMarkdown(thinkingContent, msgID == focusedUIMessageId, width),
-			bg,
-		))
-	}
-	if hiddenResponseContent != "" {
-		parts = append(parts, baseStyle.
-			Width(width-1).
-			Foreground(t.TextMuted()).
-			Render("Intermediate response"))
-		parts = append(parts, styles.ForceReplaceBackgroundWithLipgloss(
-			toMarkdown(hiddenResponseContent, msgID == focusedUIMessageId, width),
-			bg,
-		))
-	}
-	for i, toolCall := range toolCalls {
-		toolCallContent := renderToolMessage(
-			toolCall,
-			allMessages,
-			messagesService,
-			focusedUIMessageId,
-			false,
-			width,
-			i+1,
-			true,
-		)
-		parts = append(parts, toolCallContent.content)
+	for _, reasoningMsg := range reasoningMessages {
+		thinkingContent := reasoningMsg.ReasoningContent().Thinking
+		if thinkingContent != "" {
+			parts = append(parts, baseStyle.
+				Width(width-1).
+				Foreground(t.TextMuted()).
+				Render("Thinking"))
+			parts = append(parts, styles.ForceReplaceBackgroundWithLipgloss(
+				toMarkdown(thinkingContent, msgID == focusedUIMessageId, width),
+				bg,
+			))
+		}
+
+		if hiddenResponseContent := hiddenAssistantResponse(reasoningMsg); hiddenResponseContent != "" {
+			parts = append(parts, baseStyle.
+				Width(width-1).
+				Foreground(t.TextMuted()).
+				Render("Intermediate response"))
+			parts = append(parts, styles.ForceReplaceBackgroundWithLipgloss(
+				toMarkdown(hiddenResponseContent, msgID == focusedUIMessageId, width),
+				bg,
+			))
+		}
+
+		for i, toolCall := range reasoningMsg.ToolCalls() {
+			toolCallContent := renderToolMessage(
+				toolCall,
+				allMessages,
+				messagesService,
+				focusedUIMessageId,
+				false,
+				width,
+				i+1,
+				true,
+			)
+			parts = append(parts, toolCallContent.content)
+		}
 	}
 	if len(parts) == 0 {
 		parts = append(parts, "Working...")
@@ -336,6 +342,13 @@ func renderReasoningDetails(
 		Render(" ↑ Tab to collapse"))
 
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+func hiddenAssistantResponse(msg message.Message) string {
+	if isUserVisibleAssistantResponse(msg) {
+		return ""
+	}
+	return msg.Content().String()
 }
 
 func findToolResponse(toolCallID string, futureMessages []message.Message) *message.ToolResult {
@@ -762,14 +775,18 @@ func renderToolMessage(
 		// what the sub-agent is doing.
 		if expanded {
 			childPosition := 0
-			for _, childMsg := range taskMessages {
+			for childIndex, childMsg := range taskMessages {
 				if childMsg.Role != message.Assistant {
+					continue
+				}
+				if !isPromptReasoningAnchor(taskMessages, childIndex) {
 					continue
 				}
 				childUIMsgs := renderAssistantMessage(
 					childMsg,
-					0,
+					childIndex,
 					taskMessages,
+					promptReasoningMessages(taskMessages, childIndex),
 					messagesService,
 					focusedUIMessageId,
 					false,
@@ -833,7 +850,7 @@ func formatTimestampDiff(start, end int64) string {
 
 // renderReasoningPreview keeps hidden agent internals discoverable without
 // showing thoughts, tool details, or intermediate drafts in the main transcript.
-func renderReasoningPreview(thinkingContent string, width int, spinnerFrame string) string {
+func renderReasoningPreview(width int, spinnerFrame string) string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -851,13 +868,6 @@ func renderReasoningPreview(thinkingContent string, width int, spinnerFrame stri
 		spinnerStyle.Render(spinnerFrame),
 		labelStyle.Render(" reasoning hidden"),
 	)}
-
-	if thinkingContent == "" {
-		parts = append(parts, baseStyle.
-			Foreground(t.TextMuted()).
-			Italic(true).
-			Render("Aux is working..."))
-	}
 
 	parts = append(parts, baseStyle.
 		Foreground(t.TextMuted()).

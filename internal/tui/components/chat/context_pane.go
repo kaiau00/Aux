@@ -377,7 +377,8 @@ func (m *ContextPaneCmp) dashboardView() string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
-	label := baseStyle.
+	header := baseStyle.
+		Width(m.width).
 		Foreground(t.Primary()).
 		Bold(true).
 		Render(" Dashboard")
@@ -387,20 +388,34 @@ func (m *ContextPaneCmp) dashboardView() string {
 		value = m.app.Dashboard.URL()
 	}
 
-	availableWidth := m.width - lipgloss.Width(label) - 1
-	if availableWidth < 4 {
-		availableWidth = 4
+	valueLines := wrapUnspaced(value, max(4, m.width-1))
+	for i, line := range valueLines {
+		valueLines[i] = baseStyle.
+			Width(m.width).
+			Foreground(t.TextMuted()).
+			Render(" " + line)
 	}
-	value = ansiTruncate(value, availableWidth, "…")
-
+	parts := append([]string{header}, valueLines...)
 	return baseStyle.
 		Width(m.width).
-		Render(lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			label,
-			" ",
-			baseStyle.Foreground(t.TextMuted()).Render(value),
-		))
+		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+func wrapUnspaced(value string, width int) []string {
+	if value == "" {
+		return []string{""}
+	}
+	if width <= 0 {
+		return []string{value}
+	}
+	runes := []rune(value)
+	lines := make([]string, 0, len(runes)/width+1)
+	for len(runes) > width {
+		lines = append(lines, string(runes[:width]))
+		runes = runes[width:]
+	}
+	lines = append(lines, string(runes))
+	return lines
 }
 
 func (m *ContextPaneCmp) renderRow(e ContextEntry, selected bool, width int) string {
