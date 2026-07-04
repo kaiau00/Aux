@@ -65,7 +65,7 @@ var messageKeys = MessageKeys{
 		key.WithHelp("ctrl+u", "½ page up"),
 	),
 	HalfPageDown: key.NewBinding(
-		key.WithKeys("ctrl+d", "ctrl+d"),
+		key.WithKeys("ctrl+d"),
 		key.WithHelp("ctrl+d", "½ page down"),
 	),
 }
@@ -94,8 +94,12 @@ func (m *messagesCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Forward scroll keys to the viewport: PgUp/PgDn, Ctrl+U/Ctrl+D,
+		// and Up/Down arrows. Without this, only the page-scroll keys work
+		// and the user has no way to scroll one line at a time.
 		if key.Matches(msg, messageKeys.PageUp) || key.Matches(msg, messageKeys.PageDown) ||
-			key.Matches(msg, messageKeys.HalfPageUp) || key.Matches(msg, messageKeys.HalfPageDown) {
+			key.Matches(msg, messageKeys.HalfPageUp) || key.Matches(msg, messageKeys.HalfPageDown) ||
+			key.Matches(msg, m.viewport.KeyMap.Up) || key.Matches(msg, m.viewport.KeyMap.Down) {
 			u, cmd := m.viewport.Update(msg)
 			m.viewport = u
 			cmds = append(cmds, cmd)

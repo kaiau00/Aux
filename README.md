@@ -412,6 +412,20 @@ The output format is implemented as a strongly-typed `OutputFormat` in the codeb
 | `i`      | Focus editor (when not in writing mode) |
 | `Esc`    | Exit writing mode and focus messages    |
 
+### Message Scroll Shortcuts
+
+The chat viewport scrolls regardless of whether the editor is focused.
+
+| Shortcut | Action                              |
+| -------- | ----------------------------------- |
+| `↑`      | Scroll one line up                  |
+| `↓`      | Scroll one line down                |
+| `PgUp` / `b` | Page up                         |
+| `PgDn` / `f` | Page down                       |
+| `Ctrl+U` | Half page up                       |
+| `Ctrl+D` | Half page down                     |
+| Mouse wheel | Scroll up/down (3 lines per tick) |
+
 ### Context Pane Shortcuts
 
 The right-hand pane shows files currently loaded into the agent's context. Pane hotkeys are suppressed while the editor is focused, so you can type `x`, `u`, `c`, `j`, `k` freely in your prompt. Press `Esc` once to leave the editor and the pane takes over.

@@ -421,11 +421,11 @@ func (p *permissionDialogCmp) render() string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Top,
 		title,
-		baseStyle.Render(strings.Repeat(" ", lipgloss.Width(title))),
+		baseStyle.Render(strings.Repeat(" ", max(0, lipgloss.Width(title)))),
 		headerContent,
 		contentFinal,
 		buttons,
-		baseStyle.Render(strings.Repeat(" ", p.width-4)),
+		baseStyle.Render(strings.Repeat(" ", max(0, p.width-4))),
 	)
 
 	return baseStyle.
