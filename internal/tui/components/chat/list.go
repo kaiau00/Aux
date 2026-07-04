@@ -409,11 +409,27 @@ func hasUnfinishedToolCalls(messages []message.Message) bool {
 	return false
 }
 
+// lastToolCallName returns the human-friendly name of the most recent tool
+// call across the current session (or any active nested Task session). Used
+// by the working footer so users see which tool is currently in flight.
+func (m *messagesCmp) lastToolCallName() string {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		calls := m.messages[i].ToolCalls()
+		if len(calls) > 0 {
+			return toolName(calls[len(calls)-1].Name)
+		}
+	}
+	return ""
+}
+
 func (m *messagesCmp) workingStatusLabel() string {
 	if hasToolsWithoutResponse(m.messages) {
 		return "Waiting for tool response..."
 	}
 	if hasUnfinishedToolCalls(m.messages) {
+		if name := m.lastToolCallName(); name != "" {
+			return fmt.Sprintf("Calling %s...", name)
+		}
 		return "Building tool call..."
 	}
 	idx := (m.workingLabelIndex / 12) % len(workingStatusLabels)

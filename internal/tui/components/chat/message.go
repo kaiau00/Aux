@@ -252,6 +252,7 @@ func renderAssistantMessage(
 			false,
 			width,
 			i+1,
+			thinkingExpanded,
 		)
 		messages = append(messages, toolCallContent)
 		position += toolCallContent.height
@@ -328,11 +329,17 @@ func getToolAction(name string) string {
 }
 
 // renders params, params[0] (params[1]=params[2] ....)
-func renderParams(paramsWidth int, params ...string) string {
+// When expanded is true the main parameter is shown on its own line and is
+// not truncated, so the full input to the tool is visible.
+func renderParams(paramsWidth int, expanded bool, params ...string) string {
 	if len(params) == 0 {
 		return ""
 	}
 	mainParam := params[0]
+	if expanded {
+		mainParam = strings.ReplaceAll(mainParam, "\n", " ")
+		return mainParam
+	}
 	if len(mainParam) > paramsWidth {
 		mainParam = mainParam[:paramsWidth-3] + "..."
 	}
@@ -387,24 +394,24 @@ func removeWorkingDirPrefix(path string) string {
 	return path
 }
 
-func renderToolParams(paramWidth int, toolCall message.ToolCall) string {
+func renderToolParams(paramWidth int, toolCall message.ToolCall, expanded bool) string {
 	params := ""
 	switch toolCall.Name {
 	case agent.AgentToolName:
 		var params agent.AgentParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
 		prompt := strings.ReplaceAll(params.Prompt, "\n", " ")
-		return renderParams(paramWidth, prompt)
+		return renderParams(paramWidth, expanded, prompt)
 	case tools.BashToolName:
 		var params tools.BashParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
 		command := strings.ReplaceAll(params.Command, "\n", " ")
-		return renderParams(paramWidth, command)
+		return renderParams(paramWidth, expanded, command)
 	case tools.EditToolName:
 		var params tools.EditParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
 		filePath := removeWorkingDirPrefix(params.FilePath)
-		return renderParams(paramWidth, filePath)
+		return renderParams(paramWidth, expanded, filePath)
 	case tools.FetchToolName:
 		var params tools.FetchParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
@@ -418,7 +425,7 @@ func renderToolParams(paramWidth int, toolCall message.ToolCall) string {
 		if params.Timeout != 0 {
 			toolParams = append(toolParams, "timeout", (time.Duration(params.Timeout) * time.Second).String())
 		}
-		return renderParams(paramWidth, toolParams...)
+		return renderParams(paramWidth, expanded, toolParams...)
 	case tools.GlobToolName:
 		var params tools.GlobParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
@@ -429,7 +436,7 @@ func renderToolParams(paramWidth int, toolCall message.ToolCall) string {
 		if params.Path != "" {
 			toolParams = append(toolParams, "path", params.Path)
 		}
-		return renderParams(paramWidth, toolParams...)
+		return renderParams(paramWidth, expanded, toolParams...)
 	case tools.GrepToolName:
 		var params tools.GrepParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
@@ -446,7 +453,7 @@ func renderToolParams(paramWidth int, toolCall message.ToolCall) string {
 		if params.LiteralText {
 			toolParams = append(toolParams, "literal", "true")
 		}
-		return renderParams(paramWidth, toolParams...)
+		return renderParams(paramWidth, expanded, toolParams...)
 	case tools.LSToolName:
 		var params tools.LSParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
@@ -454,11 +461,11 @@ func renderToolParams(paramWidth int, toolCall message.ToolCall) string {
 		if path == "" {
 			path = "."
 		}
-		return renderParams(paramWidth, path)
+		return renderParams(paramWidth, expanded, path)
 	case tools.SourcegraphToolName:
 		var params tools.SourcegraphParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
-		return renderParams(paramWidth, params.Query)
+		return renderParams(paramWidth, expanded, params.Query)
 	case tools.ViewToolName:
 		var params tools.ViewParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
@@ -472,15 +479,15 @@ func renderToolParams(paramWidth int, toolCall message.ToolCall) string {
 		if params.Offset != 0 {
 			toolParams = append(toolParams, "offset", fmt.Sprintf("%d", params.Offset))
 		}
-		return renderParams(paramWidth, toolParams...)
+		return renderParams(paramWidth, expanded, toolParams...)
 	case tools.WriteToolName:
 		var params tools.WriteParams
 		json.Unmarshal([]byte(toolCall.Input), &params)
 		filePath := removeWorkingDirPrefix(params.FilePath)
-		return renderParams(paramWidth, filePath)
+		return renderParams(paramWidth, expanded, filePath)
 	default:
 		input := strings.ReplaceAll(toolCall.Input, "\n", " ")
-		params = renderParams(paramWidth, input)
+		params = renderParams(paramWidth, expanded, input)
 	}
 	return params
 }
@@ -587,6 +594,11 @@ func renderToolResponse(toolCall message.ToolCall, response message.ToolResult, 
 	}
 }
 
+// renderToolMessage renders a single tool call. When `expanded` is true (the
+// parent assistant message is in "show reasoning" mode), tool calls are
+// rendered with their full params (no truncation), and nested Task agent
+// calls recursively render the full child session — including the child's
+// reasoning + its own tool calls.
 func renderToolMessage(
 	toolCall message.ToolCall,
 	allMessages []message.Message,
@@ -595,6 +607,7 @@ func renderToolMessage(
 	nested bool,
 	width int,
 	position int,
+	expanded bool,
 ) uiMessage {
 	if nested {
 		width = width - 3
@@ -633,7 +646,7 @@ func renderToolMessage(
 		return toolMsg
 	}
 
-	params := renderToolParams(width-2-lipgloss.Width(toolNameText), toolCall)
+	params := renderToolParams(width-2-lipgloss.Width(toolNameText), toolCall, expanded)
 	responseContent := ""
 	if response != nil {
 		responseContent = renderToolResponse(toolCall, *response, width-2)
@@ -667,13 +680,41 @@ func renderToolMessage(
 
 	if toolCall.Name == agent.AgentToolName {
 		taskMessages, _ := messagesService.List(context.Background(), toolCall.ID)
-		toolCalls := []message.ToolCall{}
-		for _, v := range taskMessages {
-			toolCalls = append(toolCalls, v.ToolCalls()...)
-		}
-		for _, call := range toolCalls {
-			rendered := renderToolMessage(call, []message.Message{}, messagesService, focusedUIMessageId, true, width, 0)
-			parts = append(parts, rendered.content)
+		// When expanded, render the full child session — each assistant
+		// message's reasoning + tool calls — so the user can see exactly
+		// what the sub-agent is doing.
+		if expanded {
+			childPosition := 0
+			for _, childMsg := range taskMessages {
+				if childMsg.Role != message.Assistant {
+					continue
+				}
+				childUIMsgs := renderAssistantMessage(
+					childMsg,
+					0,
+					taskMessages,
+					messagesService,
+					focusedUIMessageId,
+					false,
+					true, // child reasoning is always shown when expanded
+					"",
+					width,
+					childPosition,
+				)
+				for _, u := range childUIMsgs {
+					parts = append(parts, u.content)
+					childPosition += u.height + 1
+				}
+			}
+		} else {
+			toolCalls := []message.ToolCall{}
+			for _, v := range taskMessages {
+				toolCalls = append(toolCalls, v.ToolCalls()...)
+			}
+			for _, call := range toolCalls {
+				rendered := renderToolMessage(call, []message.Message{}, messagesService, focusedUIMessageId, true, width, 0, false)
+				parts = append(parts, rendered.content)
+			}
 		}
 	}
 	if responseContent != "" && !nested {
