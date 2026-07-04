@@ -84,36 +84,42 @@ func getHelpWidget() string {
 		Render(helpText)
 }
 
-func formatTokensAndCost(tokens, contextWindow int64, cost float64) string {
-	// Format tokens in human-readable format (e.g., 110K, 1.2M)
-	var formattedTokens string
+func formatTokenCount(tokens int64) string {
+	var formatted string
 	switch {
 	case tokens >= 1_000_000:
-		formattedTokens = fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
+		formatted = fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
 	case tokens >= 1_000:
-		formattedTokens = fmt.Sprintf("%.1fK", float64(tokens)/1_000)
+		formatted = fmt.Sprintf("%.1fK", float64(tokens)/1_000)
 	default:
-		formattedTokens = fmt.Sprintf("%d", tokens)
+		formatted = fmt.Sprintf("%d", tokens)
 	}
 
-	// Remove .0 suffix if present
-	if strings.HasSuffix(formattedTokens, ".0K") {
-		formattedTokens = strings.Replace(formattedTokens, ".0K", "K", 1)
+	if strings.HasSuffix(formatted, ".0K") {
+		formatted = strings.Replace(formatted, ".0K", "K", 1)
 	}
-	if strings.HasSuffix(formattedTokens, ".0M") {
-		formattedTokens = strings.Replace(formattedTokens, ".0M", "M", 1)
+	if strings.HasSuffix(formatted, ".0M") {
+		formatted = strings.Replace(formatted, ".0M", "M", 1)
 	}
+	return formatted
+}
 
-	// Format cost with $ symbol and 2 decimal places
+func formatTokensAndCost(tokens, contextWindow int64, cost float64) string {
+	formattedTokens := formatTokenCount(tokens)
+	formattedWindow := formatTokenCount(contextWindow)
 	formattedCost := fmt.Sprintf("$%.2f", cost)
 
-	percentage := (float64(tokens) / float64(contextWindow)) * 100
-	if percentage > 80 {
-		// add the warning icon and percentage
-		formattedTokens = fmt.Sprintf("%s(%d%%)", styles.WarningIcon, int(percentage))
+	percentage := 0
+	if contextWindow > 0 {
+		percentage = int((float64(tokens) / float64(contextWindow)) * 100)
 	}
 
-	return fmt.Sprintf("Context: %s, Cost: %s", formattedTokens, formattedCost)
+	contextPart := fmt.Sprintf("%s / %s (%d%%)", formattedTokens, formattedWindow, percentage)
+	if percentage > 80 {
+		contextPart = fmt.Sprintf("%s %s", styles.WarningIcon, contextPart)
+	}
+
+	return fmt.Sprintf("Context: %s, Cost: %s", contextPart, formattedCost)
 }
 
 func (m statusCmp) View() string {

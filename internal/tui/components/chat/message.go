@@ -27,7 +27,8 @@ const (
 	assistantMessageType
 	toolMessageType
 
-	maxResultHeight = 10
+	maxResultHeight      = 10
+	thinkingPreviewLines = 2
 )
 
 type uiMessage struct {
@@ -46,6 +47,7 @@ func toMarkdown(content string, focused bool, width int) string {
 
 func renderMessage(msg string, isUser bool, isFocused bool, width int, info ...string) string {
 	t := theme.CurrentTheme()
+	bg := t.Background()
 
 	style := styles.BaseStyle().
 		Width(width - 1).
@@ -55,12 +57,16 @@ func renderMessage(msg string, isUser bool, isFocused bool, width int, info ...s
 		BorderStyle(lipgloss.ThickBorder())
 
 	if isUser {
-		style = style.BorderForeground(t.Secondary())
+		bg = t.BackgroundSecondary()
+		style = style.
+			BorderForeground(t.Secondary()).
+			Background(bg).
+			Foreground(t.Text())
 	}
 
 	// Apply markdown formatting and handle background color
 	parts := []string{
-		styles.ForceReplaceBackgroundWithLipgloss(toMarkdown(msg, isFocused, width), t.Background()),
+		styles.ForceReplaceBackgroundWithLipgloss(toMarkdown(msg, isFocused, width), bg),
 	}
 
 	// Remove newline at the end
@@ -98,7 +104,10 @@ func renderUserMessage(msg message.Message, isFocused bool, width int, position 
 	}
 	content := ""
 	if len(styledAttachments) > 0 {
-		attachmentContent := styles.BaseStyle().Width(width).Render(lipgloss.JoinHorizontal(lipgloss.Left, styledAttachments...))
+		attachmentContent := styles.BaseStyle().
+			Width(width).
+			Background(t.BackgroundSecondary()).
+			Render(lipgloss.JoinHorizontal(lipgloss.Left, styledAttachments...))
 		content = renderMessage(msg.Content().String(), true, isFocused, width, attachmentContent)
 	} else {
 		content = renderMessage(msg.Content().String(), true, isFocused, width)
@@ -128,7 +137,6 @@ func renderAssistantMessage(
 ) []uiMessage {
 	messages := []uiMessage{}
 	content := msg.Content().String()
-	thinking := msg.IsThinking()
 	thinkingContent := msg.ReasoningContent().Thinking
 	finished := msg.IsFinished()
 	finishData := msg.FinishPart()
@@ -167,6 +175,39 @@ func renderAssistantMessage(
 			)
 		}
 	}
+	if thinkingContent != "" {
+		var thinkingRendered string
+		if thinkingExpanded {
+			collapseHint := baseStyle.
+				Width(width - 1).
+				Foreground(t.TextMuted()).
+				Render(" ↑ Tab to collapse")
+			thinkingRendered = renderMessage(
+				thinkingContent,
+				false,
+				msg.ID == focusedUIMessageId,
+				width,
+				collapseHint,
+			)
+		} else {
+			thinkingRendered = renderThinkingPreview(
+				thinkingContent,
+				spinnerFrame,
+				width,
+				msg.IsThinking(),
+			)
+		}
+		thinkingMsg := uiMessage{
+			ID:          msg.ID,
+			messageType: assistantMessageType,
+			position:    position,
+			height:      lipgloss.Height(thinkingRendered),
+			content:     thinkingRendered,
+		}
+		messages = append(messages, thinkingMsg)
+		position += thinkingMsg.height
+		position++ // for the space
+	}
 	if content != "" || (finished && finishData.Reason == message.FinishReasonEndTurn) {
 		if content == "" {
 			content = "*Finished without output*"
@@ -176,22 +217,16 @@ func renderAssistantMessage(
 		}
 
 		content = renderMessage(content, false, true, width, info...)
-		messages = append(messages, uiMessage{
+		responseMsg := uiMessage{
 			ID:          msg.ID,
 			messageType: assistantMessageType,
 			position:    position,
 			height:      lipgloss.Height(content),
 			content:     content,
-		})
-		position += messages[0].height
-		position++ // for the space
-	} else if thinking && thinkingContent != "" {
-		if thinkingExpanded {
-			// Render the full thinking content
-			content = renderMessage(thinkingContent, false, msg.ID == focusedUIMessageId, width)
-		} else {
-			content = renderThinkingCollapsed(spinnerFrame, width)
 		}
+		messages = append(messages, responseMsg)
+		position += responseMsg.height
+		position++ // for the space
 	}
 
 	for i, toolCall := range msg.ToolCalls() {
@@ -664,11 +699,9 @@ func formatTimestampDiff(start, end int64) string {
 	return fmt.Sprintf("%.1fm", diffSeconds/60)
 }
 
-// renderThinkingCollapsed renders a single-line pulsing status for an
-// assistant message that is currently reasoning. The full thought block is
-// hidden by default to keep the terminal clean; the user presses Tab to
-// expand it.
-func renderThinkingCollapsed(spinnerFrame string, width int) string {
+// renderThinkingPreview shows the latest few lines of a reasoning block.
+// The full thought stream stays hidden until the user expands it with Tab.
+func renderThinkingPreview(thinkingContent, spinnerFrame string, width int, stillThinking bool) string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -679,14 +712,46 @@ func renderThinkingCollapsed(spinnerFrame string, width int) string {
 		BorderForeground(t.Primary()).
 		PaddingLeft(1)
 
-	spinnerStyle := baseStyle.Foreground(t.Primary()).Bold(true)
-	labelStyle := baseStyle.Foreground(t.TextMuted()).Italic(true)
-	hintStyle := baseStyle.Foreground(t.TextMuted())
+	parts := []string{}
+	if stillThinking {
+		spinnerStyle := baseStyle.Foreground(t.Primary()).Bold(true)
+		labelStyle := baseStyle.Foreground(t.TextMuted()).Italic(true)
+		parts = append(parts, lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			spinnerStyle.Render(spinnerFrame),
+			labelStyle.Render(" thinking"),
+		))
+	}
 
-	return style.Render(lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		spinnerStyle.Render(spinnerFrame),
-		labelStyle.Render(" Aux is analyzing"),
-		hintStyle.Render(" (Tab to expand)"),
-	))
+	preview := lastLines(thinkingContent, thinkingPreviewLines)
+	if preview != "" {
+		previewStyle := baseStyle.
+			Foreground(t.TextMuted()).
+			Italic(true).
+			Width(width - 4)
+		parts = append(parts, previewStyle.Render(preview))
+	} else if stillThinking {
+		parts = append(parts, baseStyle.
+			Foreground(t.TextMuted()).
+			Italic(true).
+			Render("Aux is analyzing…"))
+	}
+
+	parts = append(parts, baseStyle.
+		Foreground(t.TextMuted()).
+		Render("↓ Tab to expand"))
+
+	return style.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+func lastLines(text string, n int) string {
+	text = strings.TrimRight(text, "\n")
+	if text == "" || n <= 0 {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= n {
+		return text
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
 }

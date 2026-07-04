@@ -25,7 +25,7 @@ Aux is a Go-based CLI application for interacting with AI models from the termin
 - **Named Arguments for Custom Commands**: Create powerful custom commands with multiple named placeholders
 - **Semantic Retrieval**: Uses `codebase-memory-mcp` plus Personalized PageRank to keep file reads focused
 - **Live Context Pane**: A persistent right-hand pane lists every file currently loaded into the agent's context, with PageRank scores, line counts, and a hotkey to cross off entries that don't belong
-- **Collapsible Reasoning**: Reasoning models render as a single pulsing line ("⚙️ Aux is analyzing…") by default; press `Tab` to expand the thought block when you need to debug a choice
+- **Collapsible Reasoning**: Reasoning models show only the latest couple of lines by default, with a `↓ Tab to expand` hint; press `Tab` to reveal the full thought block
 - **Local Dashboard**: Starts a token-gated localhost dashboard for live read-only session visibility
 - **Amber Theme**: Updated default UI palette tuned for the Aux brand
 
@@ -438,7 +438,7 @@ The right-hand pane shows files currently loaded into the agent's context. Pane 
 | `u`      | Un-cross the selected file                        |
 | `c`      | Clear all crossed-off files                       |
 
-Reasoning blocks collapse to a single pulsing line by default. Tab toggles the focused message. Reasoning is auto-expanded when the message ended in an error, a permission denial, or a clean final response with no tool calls.
+Reasoning blocks show the latest couple of lines by default, with `↓ Tab to expand` at the bottom. Tab toggles the focused message between preview and the full thought stream.
 
 ### Editor Shortcuts
 
