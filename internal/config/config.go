@@ -229,6 +229,14 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		slog.SetDefault(logger)
 	}
 
+	// Discover and register local models now that viper is configured.
+	// This re-runs the discovery from the local package's init() with
+	// viper-resolved values, so config-file-defined LOCAL_ENDPOINT and
+	// providers.local.apiKey take effect even when the process env does
+	// not export them. Must happen before Validate so the agent model
+	// lookup (models.SupportedModels) sees the discovered entries.
+	models.LoadLocalModels()
+
 	// Validate configuration
 	if err := Validate(); err != nil {
 		return cfg, fmt.Errorf("config validation failed: %w", err)
@@ -243,6 +251,7 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		Model:     cfg.Agents[AgentTitle].Model,
 		MaxTokens: 80,
 	}
+
 	return cfg, nil
 }
 
