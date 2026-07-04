@@ -59,7 +59,7 @@ func renderMessage(msg string, isUser bool, isFocused bool, width int, info ...s
 	if isUser {
 		bg = t.BackgroundSecondary()
 		style = style.
-			BorderForeground(t.Secondary()).
+			BorderForeground(t.Info()).
 			Background(bg).
 			Foreground(t.Text())
 	}

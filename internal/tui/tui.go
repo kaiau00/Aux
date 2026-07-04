@@ -176,6 +176,13 @@ func (a appModel) Init() tea.Cmd {
 		return dialog.ShowInitDialogMsg{Show: shouldShow}
 	})
 
+	// If this is a first-boot launch, select the welcome session so the
+	// intro message is rendered immediately.
+	if a.app.BootstrapSession.ID != "" {
+		a.selectedSession = a.app.BootstrapSession
+		cmds = append(cmds, util.CmdHandler(chat.SessionSelectedMsg(a.selectedSession)))
+	}
+
 	return tea.Batch(cmds...)
 }
 

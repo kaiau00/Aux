@@ -101,8 +101,10 @@ to assist developers in writing, debugging, and understanding code directly from
 			logging.Error("Failed to create app: %v", err)
 			return err
 		}
-		if app.Dashboard != nil && !quiet {
+		if app.Dashboard != nil {
 			fmt.Fprintf(os.Stderr, "Aux dashboard: %s\n", app.Dashboard.URL())
+		} else if !quiet {
+			fmt.Fprintln(os.Stderr, "Aux dashboard: disabled (set dashboard.enabled: true in your aux config to enable)")
 		}
 		// Defer shutdown here so it runs for both interactive and non-interactive modes
 		defer app.Shutdown()

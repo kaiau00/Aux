@@ -21,6 +21,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/aux-ai/aux-cli/internal/welcome"
 )
 
 type App struct {
@@ -33,6 +34,10 @@ type App struct {
 	Dashboard  *dashboard.Server
 
 	LSPClients map[string]*lsp.Client
+
+	// BootstrapSession is the session the TUI should select on first launch,
+	// if any (e.g. the first-boot welcome session).
+	BootstrapSession session.Session
 
 	clientsMutex sync.RWMutex
 
@@ -96,6 +101,13 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	}, dashboardOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start dashboard: %w", err)
+	}
+
+	// First-boot welcome: creates a session with an intro message that the
+	// TUI will auto-select on startup. Failures are swallowed inside the
+	// welcome package so this never blocks startup.
+	if wres := welcome.MaybeShow(ctx, app.Sessions, app.Messages, app.Dashboard); wres.Shown {
+		app.BootstrapSession = wres.Session
 	}
 
 	return app, nil

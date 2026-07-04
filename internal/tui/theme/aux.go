@@ -14,8 +14,8 @@ type AuxTheme struct {
 func NewAuxTheme() *AuxTheme {
 	// Aux amber color palette
 	// Dark mode colors
-	darkBackground := "#1f1a12"
-	darkCurrentLine := "#2a2216"
+	darkBackground := "#15110a"
+	darkCurrentLine := "#1f1a12"
 	darkSelection := "#3a2d18"
 	darkForeground := "#f4e8d0"
 	darkComment := "#a9894d"
@@ -103,7 +103,7 @@ func NewAuxTheme() *AuxTheme {
 		Light: lightCurrentLine,
 	}
 	theme.BackgroundDarkerColor = lipgloss.AdaptiveColor{
-		Dark:  "#151109",
+		Dark:  "#0d0a06",
 		Light: "#fffdf7",
 	}
 
