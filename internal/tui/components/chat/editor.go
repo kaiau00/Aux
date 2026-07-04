@@ -279,6 +279,13 @@ func (m *editorCmp) BindingKeys() []key.Binding {
 	return bindings
 }
 
+// Focused reports whether the editor textarea is currently focused. Used by
+// the chat page to gate the context pane's letter hotkeys while the user
+// is typing.
+func (m *editorCmp) Focused() bool {
+	return m.textarea.Focused()
+}
+
 func CreateTextArea(existing *textarea.Model) textarea.Model {
 	t := theme.CurrentTheme()
 	bgColor := t.Background()

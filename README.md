@@ -223,6 +223,9 @@ This is useful if you want to use a different shell than your default system she
     "epsilon": 0.000001,
     "timeoutSeconds": 15
   },
+  "ponytail": {
+    "enabled": false
+  },
   "lsp": {
     "go": {
       "disabled": false,
@@ -411,7 +414,7 @@ The output format is implemented as a strongly-typed `OutputFormat` in the codeb
 
 ### Context Pane Shortcuts
 
-The right-hand pane shows files currently loaded into the agent's context.
+The right-hand pane shows files currently loaded into the agent's context. Pane hotkeys are suppressed while the editor is focused, so you can type `x`, `u`, `c`, `j`, `k` freely in your prompt. Press `Esc` once to leave the editor and the pane takes over.
 
 | Shortcut | Action                                            |
 | -------- | ------------------------------------------------- |
@@ -421,7 +424,7 @@ The right-hand pane shows files currently loaded into the agent's context.
 | `u`      | Un-cross the selected file                        |
 | `c`      | Clear all crossed-off files                       |
 
-These hotkeys use printable letters, so they only act on the context pane when the editor is not focused. Press `Esc` to leave the editor before navigating the pane.
+Reasoning blocks collapse to a single pulsing line by default. Tab toggles the focused message. Reasoning is auto-expanded when the message ended in an error, a permission denial, or a clean final response with no tool calls.
 
 ### Editor Shortcuts
 

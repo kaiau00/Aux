@@ -34,6 +34,15 @@ func GetAgentPrompt(agentName config.AgentName, provider models.ModelProvider) s
 		return basePrompt
 	}
 
+	if cfg := config.Get(); cfg == nil || !cfg.Ponytail.Enabled {
+		// Ponytail disabled — still inject project context if present, just
+		// without the YAGNI doctrine.
+		if contextContent := getContextFromPaths(); contextContent != "" {
+			return fmt.Sprintf("%s\n\n# Project-Specific Context\n Make sure to follow the instructions in the context below\n%s", basePrompt, contextContent)
+		}
+		return basePrompt
+	}
+
 	if contextContent := getContextFromPaths(); contextContent != "" {
 		logging.Debug("Context content", "Context", contextContent)
 		return appendPonytailProtocol(fmt.Sprintf("%s\n\n# Project-Specific Context\n Make sure to follow the instructions in the context below\n%s", basePrompt, contextContent))
@@ -65,23 +74,12 @@ func appendPonytailProtocol(prompt string) string {
 	return fmt.Sprintf("%s\n\n%s", prompt, ponytailProtocol)
 }
 
-var (
-	onceContext    sync.Once
-	contextContent string
-)
-
 func getContextFromPaths() string {
-	onceContext.Do(func() {
-		var (
-			cfg          = config.Get()
-			workDir      = cfg.WorkingDir
-			contextPaths = cfg.ContextPaths
-		)
-
-		contextContent = processContextPaths(workDir, contextPaths)
-	})
-
-	return contextContent
+	cfg := config.Get()
+	if cfg == nil {
+		return ""
+	}
+	return processContextPaths(cfg.WorkingDir, cfg.ContextPaths)
 }
 
 func processContextPaths(workDir string, paths []string) string {

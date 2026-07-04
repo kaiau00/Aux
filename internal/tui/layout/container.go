@@ -11,6 +11,18 @@ type Container interface {
 	tea.Model
 	Sizeable
 	Bindings
+	// Focused optionally reports whether the contained model currently has
+	// focus. Containers whose content does not implement Focusser return
+	// false.
+	Focusser
+}
+
+// Focusser is an optional capability a Container's content can implement to
+// expose its focus state. Used by the chat page to know whether the editor
+// textarea is currently focused, so the context pane can suppress its
+// hotkeys while the user is typing.
+type Focusser interface {
+	Focused() bool
 }
 type container struct {
 	width  int
@@ -119,6 +131,16 @@ func (c *container) BindingKeys() []key.Binding {
 		return b.BindingKeys()
 	}
 	return []key.Binding{}
+}
+
+// Focused returns true when the contained model reports focus. Returns
+// false when the model does not implement Focusser, so callers can treat
+// missing focus state as "not focused" without special casing.
+func (c *container) Focused() bool {
+	if f, ok := c.content.(Focusser); ok {
+		return f.Focused()
+	}
+	return false
 }
 
 type ContainerOption func(*container)

@@ -38,7 +38,7 @@ type ContextEntry struct {
 	ToolCallID  string
 }
 
-type contextPaneCmp struct {
+type ContextPaneCmp struct {
 	app    *app.App
 	width  int
 	height int
@@ -48,6 +48,11 @@ type contextPaneCmp struct {
 	entries    []ContextEntry
 	selected   int
 	offset     int
+
+	// editorFocused suppresses pane hotkeys while the editor textarea is
+	// active so the user can type x/u/c/j/k without triggering context
+	// pane actions.
+	editorFocused bool
 
 	keys ContextPaneKeys
 }
@@ -83,7 +88,7 @@ var defaultContextPaneKeys = ContextPaneKeys{
 	),
 }
 
-func (m *contextPaneCmp) Init() tea.Cmd {
+func (m *ContextPaneCmp) Init() tea.Cmd {
 	if m.app == nil || m.app.Messages == nil {
 		return nil
 	}
@@ -94,7 +99,7 @@ func (m *contextPaneCmp) Init() tea.Cmd {
 	}
 }
 
-func (m *contextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -132,6 +137,11 @@ func (m *contextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionID = msg.Payload.ID
 		}
 	case tea.KeyMsg:
+		// Skip pane hotkeys while the editor textarea has focus so x/u/c/j/k
+		// type into the prompt instead of acting on the pane.
+		if m.editorFocused {
+			return m, nil
+		}
 		switch {
 		case key.Matches(msg, m.keys.Up):
 			m.moveSelection(-1)
@@ -148,21 +158,28 @@ func (m *contextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *contextPaneCmp) BindingKeys() []key.Binding {
+func (m *ContextPaneCmp) BindingKeys() []key.Binding {
 	return []key.Binding{m.keys.Up, m.keys.Down, m.keys.CrossOff, m.keys.Uncross, m.keys.Clear}
 }
 
-func (m *contextPaneCmp) SetSize(width, height int) tea.Cmd {
+// SetEditorFocused toggles whether the editor textarea currently has focus.
+// While true, the pane ignores its letter hotkeys so the user can type
+// freely in the editor.
+func (m *ContextPaneCmp) SetEditorFocused(focused bool) {
+	m.editorFocused = focused
+}
+
+func (m *ContextPaneCmp) SetSize(width, height int) tea.Cmd {
 	m.width = width
 	m.height = height
 	return nil
 }
 
-func (m *contextPaneCmp) GetSize() (int, int) {
+func (m *ContextPaneCmp) GetSize() (int, int) {
 	return m.width, m.height
 }
 
-func (m *contextPaneCmp) moveSelection(delta int) {
+func (m *ContextPaneCmp) moveSelection(delta int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.entries) == 0 {
@@ -178,7 +195,7 @@ func (m *contextPaneCmp) moveSelection(delta int) {
 	}
 }
 
-func (m *contextPaneCmp) toggleCross(crossed bool) {
+func (m *ContextPaneCmp) toggleCross(crossed bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.selected < 0 || m.selected >= len(m.entries) {
@@ -187,7 +204,7 @@ func (m *contextPaneCmp) toggleCross(crossed bool) {
 	m.entries[m.selected].CrossedOff = crossed
 }
 
-func (m *contextPaneCmp) clearCrossed() {
+func (m *ContextPaneCmp) clearCrossed() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	kept := m.entries[:0]
@@ -206,7 +223,7 @@ func (m *contextPaneCmp) clearCrossed() {
 // ContextEntry per successful read. Re-reads of the same path replace the
 // prior entry so the pane reflects what is currently in the agent's context,
 // not a historical list.
-func (m *contextPaneCmp) absorbMessage(msg message.Message) {
+func (m *ContextPaneCmp) absorbMessage(msg message.Message) {
 	results := msg.ToolResults()
 	if len(results) == 0 {
 		return
@@ -272,7 +289,7 @@ func (m *contextPaneCmp) absorbMessage(msg message.Message) {
 	})
 }
 
-func (m *contextPaneCmp) View() string {
+func (m *ContextPaneCmp) View() string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -351,7 +368,7 @@ func (m *contextPaneCmp) View() string {
 		)
 }
 
-func (m *contextPaneCmp) renderRow(e ContextEntry, selected bool, width int) string {
+func (m *ContextPaneCmp) renderRow(e ContextEntry, selected bool, width int) string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -417,8 +434,8 @@ func ansiTruncate(s string, maxWidth int, ellipsis string) string {
 	return string(runes[:maxWidth-len(ellipsis)]) + ellipsis
 }
 
-func NewContextPaneCmp(app *app.App) tea.Model {
-	return &contextPaneCmp{
+func NewContextPaneCmp(app *app.App) *ContextPaneCmp {
+	return &ContextPaneCmp{
 		app:  app,
 		keys: defaultContextPaneKeys,
 	}

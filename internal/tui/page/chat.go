@@ -23,6 +23,7 @@ type chatPage struct {
 	app                  *app.App
 	editor               layout.Container
 	messages             layout.Container
+	contextPane          *chat.ContextPaneCmp
 	layout               layout.SplitPaneLayout
 	session              session.Session
 	completionDialog     dialog.CompletionDialog
@@ -130,6 +131,12 @@ func (p *chatPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 	p.layout = u.(layout.SplitPaneLayout)
 
+	// Sync editor focus to the context pane so its letter hotkeys do not
+	// fire while the user is typing into the editor.
+	if p.contextPane != nil {
+		p.contextPane.SetEditorFocused(p.editor.Focused())
+	}
+
 	return p, tea.Batch(cmds...)
 }
 
@@ -197,18 +204,21 @@ func NewChatPage(app *app.App) tea.Model {
 		chat.NewMessagesCmp(app),
 		layout.WithPadding(1, 1, 0, 1),
 	)
+	editor := chat.NewEditorCmp(app)
 	editorContainer := layout.NewContainer(
-		chat.NewEditorCmp(app),
+		editor,
 		layout.WithBorder(true, false, false, false),
 	)
+	contextPane := chat.NewContextPaneCmp(app)
 	contextPaneContainer := layout.NewContainer(
-		chat.NewContextPaneCmp(app),
+		contextPane,
 		layout.WithPadding(1, 1, 1, 1),
 	)
 	return &chatPage{
 		app:              app,
 		editor:           editorContainer,
 		messages:         messagesContainer,
+		contextPane:      contextPane,
 		completionDialog: completionDialog,
 		layout: layout.NewSplitPane(
 			layout.WithLeftPanel(messagesContainer),

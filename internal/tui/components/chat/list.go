@@ -229,6 +229,15 @@ func (m *messagesCmp) renderView() {
 			}
 			isSummary := m.session.SummaryMessageID == msg.ID
 
+			// Auto-expand thinking when the user almost certainly wants to
+			// see the reasoning: errors, permission denials, and clean
+			// final responses with no tool calls. User's explicit Tab
+			// toggle always wins once they've interacted with the message.
+			expanded, userSet := m.expandedThinking[msg.ID]
+			if !userSet {
+				expanded = shouldAutoExpandThinking(msg)
+			}
+
 			assistantMessages := renderAssistantMessage(
 				msg,
 				inx,
@@ -236,7 +245,7 @@ func (m *messagesCmp) renderView() {
 				m.app.Messages,
 				m.currentMsgID,
 				isSummary,
-				m.expandedThinking[msg.ID],
+				expanded,
 				m.spinner.View(),
 				m.width,
 				pos,
@@ -320,6 +329,20 @@ func (m *messagesCmp) View() string {
 				m.help(),
 			),
 		)
+}
+
+func shouldAutoExpandThinking(msg message.Message) bool {
+	if !msg.IsThinking() {
+		return false
+	}
+	switch msg.FinishReason() {
+	case message.FinishReasonError, message.FinishReasonPermissionDenied:
+		return true
+	}
+	if msg.FinishReason() == message.FinishReasonEndTurn && len(msg.ToolCalls()) == 0 {
+		return true
+	}
+	return false
 }
 
 func hasToolsWithoutResponse(messages []message.Message) bool {

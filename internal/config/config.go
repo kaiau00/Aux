@@ -101,6 +101,13 @@ type SemanticRetrievalConfig struct {
 	TimeoutSeconds int     `json:"timeoutSeconds,omitempty"`
 }
 
+// PonytailConfig controls the Ponytail Protocol anti-overengineering
+// prompt injected into Coder/Task agent prompts. Disabled by default for
+// transparency; users who want the YAGNI guidance can opt in.
+type PonytailConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
 // Config is the main configuration structure for the application.
 type Config struct {
 	Data              Data                              `json:"data"`
@@ -117,6 +124,7 @@ type Config struct {
 	Shell             ShellConfig                       `json:"shell,omitempty"`
 	AutoCompact       bool                              `json:"autoCompact,omitempty"`
 	SemanticRetrieval SemanticRetrievalConfig           `json:"semanticRetrieval,omitempty"`
+	Ponytail          PonytailConfig                    `json:"ponytail,omitempty"`
 }
 
 // Application constants
@@ -268,6 +276,8 @@ func setDefaults(debug bool) {
 	viper.SetDefault("semanticRetrieval.maxIterations", 50)
 	viper.SetDefault("semanticRetrieval.epsilon", 0.000001)
 	viper.SetDefault("semanticRetrieval.timeoutSeconds", 15)
+	// Ponytail Protocol is opt-in so users see unopinionated prompts by default.
+	viper.SetDefault("ponytail.enabled", false)
 
 	// Set default shell from environment or fallback to /bin/bash
 	shellPath := os.Getenv("SHELL")
