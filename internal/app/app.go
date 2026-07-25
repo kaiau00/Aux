@@ -23,6 +23,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/lsp"
+	"github.com/aux-ai/aux-cli/internal/memory"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/profile"
@@ -48,6 +49,7 @@ type App struct {
 	TaskCoord    *task.Coordinator
 	Artifacts    *artifact.Service
 	Pages        *contextstore.Store
+	Memories     *memory.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -76,7 +78,8 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	projects := project.NewService(project.NewStore(conn), project.GitVCS{})
 	profiles := profile.NewService(profile.NewStore(conn), profile.NewBuilder(profile.NewStore(conn), profile.DefaultScanners()))
 	taskStore := task.NewStore(conn)
-	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory())
+	memories := memory.NewService(memory.NewStore(conn), events)
+	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory()).WithMemory(memories)
 	// Content-addressed artifact store, with bytes under the app data directory.
 	artifacts := artifact.NewService(
 		artifact.NewFSBackend(filepath.Join(config.Get().Data.Directory, "artifacts")),
@@ -98,6 +101,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		TaskCoord:    taskCoord,
 		Artifacts:    artifacts,
 		Pages:        pages,
+		Memories:     memories,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 

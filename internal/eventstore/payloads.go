@@ -50,6 +50,15 @@ type TaskPayload struct {
 	ProfileVersionID string `json:"profileVersionId,omitempty"`
 }
 
+// MemoryPayload accompanies memory.* events.
+type MemoryPayload struct {
+	MemoryID   string  `json:"memoryId"`
+	MemoryType string  `json:"memoryType,omitempty"`
+	State      string  `json:"state,omitempty"`
+	StableKey  string  `json:"stableKey,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+}
+
 // ToolPayload accompanies tool.* events.
 type ToolPayload struct {
 	ToolExecutionID string `json:"toolExecutionId"`

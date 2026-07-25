@@ -3,12 +3,15 @@ package task
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
+	"github.com/aux-ai/aux-cli/internal/memory"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
@@ -37,6 +40,7 @@ type Coordinator struct {
 	profiles ProfileCompiler
 	store    *Store
 	events   EventSink
+	memories *memory.Service
 	workdir  string
 
 	mu     sync.Mutex
@@ -46,6 +50,13 @@ type Coordinator struct {
 // NewCoordinator builds a task coordinator. events may be nil.
 func NewCoordinator(resolver ProjectResolver, profiles ProfileCompiler, store *Store, events EventSink, workdir string) *Coordinator {
 	return &Coordinator{resolver: resolver, profiles: profiles, store: store, events: events, workdir: workdir}
+}
+
+// WithMemory attaches a memory service so completed tasks produce episodic
+// memory candidates and active memories surface as available context. Optional.
+func (c *Coordinator) WithMemory(m *memory.Service) *Coordinator {
+	c.memories = m
+	return c
 }
 
 func (c *Coordinator) resolution(ctx context.Context) (project.Resolution, error) {
@@ -112,10 +123,29 @@ func (c *Coordinator) Begin(ctx context.Context, sessionID, objective string) (c
 
 	ctx = context.WithValue(ctx, tools.TaskIDContextKey, taskID)
 	ctx = context.WithValue(ctx, tools.ProjectIDContextKey, res.Project.ID)
-	// Offer the compiled project manifest and task spec to the prompt compiler as
-	// available context pages (roadmapplan.md §7.1).
-	ctx = promptcompiler.WithProjectContext(ctx, eff.Manifest, spec.RenderText())
+	// Offer the compiled project manifest (plus any relevant prior memory) and the
+	// task spec to the prompt compiler as available context pages (§7.1, §8.4).
+	manifest := eff.Manifest + c.memorySection(ctx, res.Project.ID)
+	ctx = promptcompiler.WithProjectContext(ctx, manifest, spec.RenderText())
 	return ctx, taskID, nil
+}
+
+// memorySection renders a bounded set of active memories for the manifest, so
+// prior project knowledge is available without re-discovery (roadmapplan.md §8.4).
+func (c *Coordinator) memorySection(ctx context.Context, projectID string) string {
+	if c.memories == nil {
+		return ""
+	}
+	mems, err := c.memories.Retrieve(ctx, projectID, nil, 5)
+	if err != nil || len(mems) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Prior knowledge:\n")
+	for _, m := range mems {
+		fmt.Fprintf(&b, "  - [%s] %s\n", m.Type, m.StableKey)
+	}
+	return b.String()
 }
 
 // Finish marks a task completed and emits task.completed.
@@ -132,6 +162,32 @@ func (c *Coordinator) Finish(ctx context.Context, taskID, outcome string) {
 	c.emit(context.Background(), projectID, sessionID, eventstore.TaskCompleted, eventstore.TaskPayload{
 		TaskID: taskID, Status: string(StatusCompleted), Outcome: outcome,
 	})
+	c.learnFromTask(context.Background(), taskID, outcome)
+}
+
+// learnFromTask extracts deterministic memory candidates from a completed task
+// (roadmapplan.md §8.2). This is safe to run after PR 12; earlier slices
+// generated the evidence memory needs.
+func (c *Coordinator) learnFromTask(ctx context.Context, taskID, outcome string) {
+	if c.memories == nil {
+		return
+	}
+	t, err := c.store.GetTask(ctx, taskID)
+	if err != nil {
+		return
+	}
+	rev := ""
+	if c.cached != nil {
+		rev = c.cached.Revision.VCSRevision
+	}
+	_ = c.memories.Learn(ctx, memory.Extract(memory.ExtractInput{
+		ProjectID:          t.ProjectID,
+		TaskID:             t.ID,
+		Objective:          t.Objective,
+		Mode:               string(t.Mode),
+		Outcome:            outcome,
+		SupportingRevision: rev,
+	}))
 }
 
 // Fail marks a task failed or cancelled and emits the corresponding event.
