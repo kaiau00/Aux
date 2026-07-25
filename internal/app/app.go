@@ -149,7 +149,7 @@ func (app *App) resolveProject(ctx context.Context) {
 	}
 	logging.Debug("resolved project", "project", res.Project.CanonicalName, "id", res.Project.ID, "branch", res.Revision.BranchName)
 
-	version, _, err := app.Profiles.CompileProject(ctx, res.Project.ID, res.Root.CanonicalPath, res.Revision.VCSRevision)
+	eff, err := app.Profiles.CompileEffective(ctx, res.Project.ID, res.Revision.ID, res.Root.CanonicalPath, res.Revision.VCSRevision, "")
 	if err != nil {
 		logging.Warn("failed to compile project profile", "error", err)
 		return
@@ -158,7 +158,7 @@ func (app *App) resolveProject(ctx context.Context) {
 	if fp, ferr := app.Profiles.InputFingerprint(ctx, res.Root.CanonicalPath); ferr == nil {
 		_ = app.Projects.Store().SetRevisionProfileInputHash(ctx, res.Revision.ID, fp)
 	}
-	logging.Debug("compiled project profile", "version", version.ID, "reused", version.Reused)
+	logging.Debug("compiled effective profile", "entries", len(eff.Entries), "manifestTokens", eff.TokenEstimate)
 }
 
 // initTheme sets the application theme based on the configuration

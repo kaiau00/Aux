@@ -3,11 +3,15 @@ package profile
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aux-ai/aux-cli/internal/db"
 )
+
+func nowMillis() int64 { return time.Now().UnixMilli() }
 
 // Store persists profiles, versions, and entries.
 type Store struct {
@@ -111,6 +115,53 @@ func (s *Store) LatestVersion(ctx context.Context, profileID string) (Version, b
 		return Version{}, false, err
 	}
 	return v, true, nil
+}
+
+// SaveEffective persists an effective profile, deduplicating by its unique key.
+// It returns the stored id (existing or newly created).
+func (s *Store) SaveEffective(ctx context.Context, id string, e Effective) (string, error) {
+	manifestJSON, err := json.Marshal(e)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal effective profile: %w", err)
+	}
+	// Reuse an existing identical effective profile if present.
+	var existingID string
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id FROM effective_profiles
+         WHERE project_id = ? AND project_revision_id = ? AND task_mode = ? AND version_set_hash = ?`,
+		e.ProjectID, e.RevisionID, e.TaskMode, e.VersionSetHash)
+	if err := row.Scan(&existingID); err == nil {
+		return existingID, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("failed to look up effective profile: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO effective_profiles (id, project_id, project_revision_id, task_mode, version_set_hash, manifest_json, created_at)
+         VALUES (?,?,?,?,?,?,?)`,
+		id, e.ProjectID, e.RevisionID, e.TaskMode, e.VersionSetHash, string(manifestJSON), nowMillis())
+	if err != nil {
+		return "", fmt.Errorf("failed to insert effective profile: %w", err)
+	}
+	return id, nil
+}
+
+// GetLatestEffective returns the most recent effective profile for a project + task mode.
+func (s *Store) GetLatestEffective(ctx context.Context, projectID, taskMode string) (Effective, bool, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT manifest_json FROM effective_profiles
+         WHERE project_id = ? AND task_mode = ? ORDER BY created_at DESC LIMIT 1`, projectID, taskMode)
+	var manifestJSON string
+	if err := row.Scan(&manifestJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Effective{}, false, nil
+		}
+		return Effective{}, false, err
+	}
+	var e Effective
+	if err := json.Unmarshal([]byte(manifestJSON), &e); err != nil {
+		return Effective{}, false, fmt.Errorf("failed to decode effective profile: %w", err)
+	}
+	return e, true, nil
 }
 
 type scanner interface {

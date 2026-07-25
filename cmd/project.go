@@ -46,7 +46,7 @@ var projectShowCmd = &cobra.Command{
 
 		pstore := profile.NewStore(conn)
 		profiles := profile.NewService(pstore, profile.NewBuilder(pstore, profile.DefaultScanners()))
-		version, entries, err := profiles.CompileProject(ctx, res.Project.ID, res.Root.CanonicalPath, res.Revision.VCSRevision)
+		eff, err := profiles.CompileEffective(ctx, res.Project.ID, res.Revision.ID, res.Root.CanonicalPath, res.Revision.VCSRevision, "")
 		if err != nil {
 			return fmt.Errorf("failed to compile profile: %w", err)
 		}
@@ -57,7 +57,7 @@ var projectShowCmd = &cobra.Command{
 				"project":  res.Project,
 				"root":     res.Root,
 				"revision": res.Revision,
-				"profile":  map[string]any{"version": version, "entries": entries},
+				"profile":  eff,
 			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -74,10 +74,16 @@ var projectShowCmd = &cobra.Command{
 			fmt.Printf(" [dirty]")
 		}
 		fmt.Println()
-		fmt.Printf("Profile:  version %s (reused=%v, %d entries)\n", short(version.ID), version.Reused, len(entries))
-		for _, e := range entries {
-			fmt.Printf("  - [%s] %s (source=%s, confidence=%.2f)\n", e.Type, e.Key, e.SourceType, e.Confidence)
+		fmt.Printf("Effective profile: %d entries, ~%d manifest tokens\n", len(eff.Entries), eff.TokenEstimate)
+		for _, e := range eff.Entries {
+			conflict := ""
+			if e.Conflict {
+				conflict = " [conflict]"
+			}
+			fmt.Printf("  - [%s] %s (owner=%s, source=%s, confidence=%.2f)%s\n", e.Type, e.Key, e.OwnerType, e.SourceType, e.Confidence, conflict)
 		}
+		fmt.Println("\n--- Manifest ---")
+		fmt.Print(eff.Manifest)
 		return nil
 	},
 }
