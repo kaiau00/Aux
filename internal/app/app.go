@@ -20,18 +20,21 @@ import (
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/lsp"
 	"github.com/aux-ai/aux-cli/internal/message"
+	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/session"
+	"github.com/aux-ai/aux-cli/internal/toolexec"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 )
 
 type App struct {
 	Sessions    session.Service
 	Messages    message.Service
-	History     history.Service
-	Permissions permission.Service
-	Cost        cost.Service
-	Events      eventstore.Service
+	History      history.Service
+	Permissions  permission.Service
+	Cost         cost.Service
+	Events       eventstore.Service
+	ToolRecorder tools.Recorder
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -54,15 +57,19 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	// (see ADR 0003). The event store is the durable, ordered runtime log.
 	ledger := cost.NewService(conn)
 	events := eventstore.NewService(conn)
+	// The tool recorder persists tool_executions and emits tool.* events; the
+	// executor (built inside the agent) routes every tool call through it.
+	toolRecorder := toolexec.NewRecorder(toolexec.NewStore(conn), events)
 
 	app := &App{
-		Sessions:    sessions,
-		Messages:    messages,
-		History:     files,
-		Permissions: permission.NewPermissionService(),
-		Cost:        ledger,
-		Events:      events,
-		LSPClients:  make(map[string]*lsp.Client),
+		Sessions:     sessions,
+		Messages:     messages,
+		History:      files,
+		Permissions:  permission.NewPermissionService(),
+		Cost:         ledger,
+		Events:       events,
+		ToolRecorder: toolRecorder,
+		LSPClients:   make(map[string]*lsp.Client),
 	}
 
 	// Initialize theme based on configuration
@@ -80,12 +87,14 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		app.Messages,
 		app.Cost,
 		app.Events,
+		app.ToolRecorder,
 		agent.CoderAgentTools(
 			app.Permissions,
 			app.Sessions,
 			app.Messages,
 			app.Cost,
 			app.Events,
+			app.ToolRecorder,
 			app.History,
 			app.LSPClients,
 		),

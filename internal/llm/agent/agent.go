@@ -66,6 +66,7 @@ type agent struct {
 	messages message.Service
 	ledger   cost.Service
 	events   eventstore.Service
+	executor *tools.Executor
 
 	tools    []tools.BaseTool
 	provider provider.Provider
@@ -82,6 +83,7 @@ func NewAgent(
 	messages message.Service,
 	ledger cost.Service,
 	events eventstore.Service,
+	recorder tools.Recorder,
 	agentTools []tools.BaseTool,
 ) (Service, error) {
 	agentProvider, err := createAgentProvider(agentName)
@@ -111,6 +113,7 @@ func NewAgent(
 		sessions:          sessions,
 		ledger:            ledger,
 		events:            events,
+		executor:          tools.NewExecutor(recorder),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
 		summarizeProvider: summarizeProvider,
@@ -417,7 +420,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 				}
 				continue
 			}
-			toolResult, toolErr := tool.Run(ctx, tools.ToolCall{
+			toolResult, toolErr := a.executor.Execute(ctx, tool, tools.ToolCall{
 				ID:    toolCall.ID,
 				Name:  toolCall.Name,
 				Input: toolCall.Input,

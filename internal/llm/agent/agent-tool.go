@@ -19,6 +19,7 @@ type agentTool struct {
 	messages   message.Service
 	ledger     cost.Service
 	events     eventstore.Service
+	recorder   tools.Recorder
 	lspClients map[string]*lsp.Client
 }
 
@@ -58,7 +59,7 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 		return tools.ToolResponse{}, fmt.Errorf("session_id and message_id are required")
 	}
 
-	agent, err := NewAgent(config.AgentTask, b.sessions, b.messages, b.ledger, b.events, TaskAgentTools(b.lspClients))
+	agent, err := NewAgent(config.AgentTask, b.sessions, b.messages, b.ledger, b.events, b.recorder, TaskAgentTools(b.lspClients))
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error creating agent: %s", err)
 	}
@@ -94,6 +95,7 @@ func NewAgentTool(
 	Messages message.Service,
 	Ledger cost.Service,
 	Events eventstore.Service,
+	Recorder tools.Recorder,
 	LspClients map[string]*lsp.Client,
 ) tools.BaseTool {
 	return &agentTool{
@@ -101,6 +103,7 @@ func NewAgentTool(
 		messages:   Messages,
 		ledger:     Ledger,
 		events:     Events,
+		recorder:   Recorder,
 		lspClients: LspClients,
 	}
 }

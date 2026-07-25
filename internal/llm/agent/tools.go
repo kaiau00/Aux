@@ -19,6 +19,7 @@ func CoderAgentTools(
 	messages message.Service,
 	ledger cost.Service,
 	events eventstore.Service,
+	recorder tools.Recorder,
 	history history.Service,
 	lspClients map[string]*lsp.Client,
 ) []tools.BaseTool {
@@ -39,7 +40,7 @@ func CoderAgentTools(
 			tools.NewViewTool(lspClients),
 			tools.NewPatchTool(lspClients, permissions, history),
 			tools.NewWriteTool(lspClients, permissions, history),
-			NewAgentTool(sessions, messages, ledger, events, lspClients),
+			NewAgentTool(sessions, messages, ledger, events, recorder, lspClients),
 		}, otherTools...,
 	)
 }

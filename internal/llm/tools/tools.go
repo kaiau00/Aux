@@ -15,24 +15,26 @@ type ToolInfo struct {
 type toolResponseType string
 
 type (
-	sessionIDContextKey   string
-	messageIDContextKey   string
-	turnIDContextKey      string
-	modelCallIDContextKey string
-	taskIDContextKey      string
-	projectIDContextKey   string
+	sessionIDContextKey       string
+	messageIDContextKey       string
+	turnIDContextKey          string
+	modelCallIDContextKey     string
+	taskIDContextKey          string
+	projectIDContextKey       string
+	toolExecutionIDContextKey string
 )
 
 const (
 	ToolResponseTypeText  toolResponseType = "text"
 	ToolResponseTypeImage toolResponseType = "image"
 
-	SessionIDContextKey   sessionIDContextKey   = "session_id"
-	MessageIDContextKey   messageIDContextKey   = "message_id"
-	TurnIDContextKey      turnIDContextKey      = "turn_id"
-	ModelCallIDContextKey modelCallIDContextKey = "model_call_id"
-	TaskIDContextKey      taskIDContextKey      = "task_id"
-	ProjectIDContextKey   projectIDContextKey   = "project_id"
+	SessionIDContextKey       sessionIDContextKey       = "session_id"
+	MessageIDContextKey       messageIDContextKey       = "message_id"
+	TurnIDContextKey          turnIDContextKey          = "turn_id"
+	ModelCallIDContextKey     modelCallIDContextKey     = "model_call_id"
+	TaskIDContextKey          taskIDContextKey          = "task_id"
+	ProjectIDContextKey       projectIDContextKey       = "project_id"
+	ToolExecutionIDContextKey toolExecutionIDContextKey = "tool_execution_id"
 )
 
 type ToolResponse struct {
