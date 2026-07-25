@@ -13,6 +13,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/dashboard"
 	"github.com/aux-ai/aux-cli/internal/db"
+	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/format"
 	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
@@ -30,6 +31,7 @@ type App struct {
 	History     history.Service
 	Permissions permission.Service
 	Cost        cost.Service
+	Events      eventstore.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -48,8 +50,10 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	sessions := session.NewService(q)
 	messages := message.NewService(q)
 	files := history.NewService(q, conn)
-	// The ledger runs raw SQL directly against the connection (see ADR 0003).
+	// The ledger and event store run raw SQL directly against the connection
+	// (see ADR 0003). The event store is the durable, ordered runtime log.
 	ledger := cost.NewService(conn)
+	events := eventstore.NewService(conn)
 
 	app := &App{
 		Sessions:    sessions,
@@ -57,6 +61,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		History:     files,
 		Permissions: permission.NewPermissionService(),
 		Cost:        ledger,
+		Events:      events,
 		LSPClients:  make(map[string]*lsp.Client),
 	}
 
@@ -74,11 +79,13 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		app.Sessions,
 		app.Messages,
 		app.Cost,
+		app.Events,
 		agent.CoderAgentTools(
 			app.Permissions,
 			app.Sessions,
 			app.Messages,
 			app.Cost,
+			app.Events,
 			app.History,
 			app.LSPClients,
 		),
