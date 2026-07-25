@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/aux-ai/aux-cli/internal/artifact"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/dashboard"
@@ -17,10 +19,10 @@ import (
 	"github.com/aux-ai/aux-cli/internal/format"
 	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
+	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/lsp"
 	"github.com/aux-ai/aux-cli/internal/message"
-	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
@@ -31,8 +33,8 @@ import (
 )
 
 type App struct {
-	Sessions    session.Service
-	Messages    message.Service
+	Sessions     session.Service
+	Messages     message.Service
 	History      history.Service
 	Permissions  permission.Service
 	Cost         cost.Service
@@ -42,6 +44,7 @@ type App struct {
 	Profiles     *profile.Service
 	Tasks        *task.Store
 	TaskCoord    *task.Coordinator
+	Artifacts    *artifact.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -71,6 +74,11 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	profiles := profile.NewService(profile.NewStore(conn), profile.NewBuilder(profile.NewStore(conn), profile.DefaultScanners()))
 	taskStore := task.NewStore(conn)
 	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory())
+	// Content-addressed artifact store, with bytes under the app data directory.
+	artifacts := artifact.NewService(
+		artifact.NewFSBackend(filepath.Join(config.Get().Data.Directory, "artifacts")),
+		artifact.NewStore(conn),
+	)
 
 	app := &App{
 		Sessions:     sessions,
@@ -84,6 +92,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Profiles:     profiles,
 		Tasks:        taskStore,
 		TaskCoord:    taskCoord,
+		Artifacts:    artifacts,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 
@@ -101,6 +110,11 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	agent.GetMcpTools(ctx, app.Permissions)
 
 	var err error
+	virtualizer := artifact.NewVirtualizer(
+		app.Artifacts,
+		artifact.Mode(config.Get().Context.Virtualization),
+		config.Get().Context.ArtifactThresholdBytes,
+	)
 	coderDeps := agent.Deps{
 		Sessions:    app.Sessions,
 		Messages:    app.Messages,
@@ -108,17 +122,13 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Events:      app.Events,
 		Recorder:    app.ToolRecorder,
 		Coordinator: app.TaskCoord,
+		Virtualizer: virtualizer,
 	}
-	app.CoderAgent, err = agent.NewAgent(
-		config.AgentCoder,
-		coderDeps,
-		agent.CoderAgentTools(
-			coderDeps,
-			app.Permissions,
-			app.History,
-			app.LSPClients,
-		),
+	coderTools := append(
+		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients),
+		artifact.NewViewTool(app.Artifacts),
 	)
+	app.CoderAgent, err = agent.NewAgent(config.AgentCoder, coderDeps, coderTools)
 	if err != nil {
 		logging.Error("Failed to create coder agent", err)
 		return nil, err

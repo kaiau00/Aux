@@ -12,6 +12,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/llm/provider"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/message"
+	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/toolexec"
@@ -53,7 +54,8 @@ func newTurnAgent(t *testing.T, p provider.Provider, toolset ...tools.BaseTool) 
 		messages: messages,
 		ledger:   ledger,
 		events:   events,
-		executor: tools.NewExecutor(recorder),
+		compiler: promptcompiler.NewCompatibilityCompiler(),
+		executor: tools.NewExecutor(recorder, nil),
 		tools:    toolset,
 		provider: p,
 	}
@@ -115,6 +117,7 @@ func TestRunTurnTextResponseIsVisibleAndAccounted(t *testing.T) {
 	want := []eventstore.Type{
 		eventstore.TurnStarted,
 		eventstore.ModelCallStarted,
+		eventstore.ContextCompiled,
 		eventstore.ModelCallFirstToken,
 		eventstore.ModelCallCompleted,
 		eventstore.TurnCompleted,
@@ -161,6 +164,7 @@ func TestRunTurnToolCallsOrderedAndErrorReturned(t *testing.T) {
 	want := []eventstore.Type{
 		eventstore.TurnStarted,
 		eventstore.ModelCallStarted,
+		eventstore.ContextCompiled,
 		eventstore.ModelCallFirstToken,
 		eventstore.ModelCallCompleted,
 		eventstore.ToolStarted,

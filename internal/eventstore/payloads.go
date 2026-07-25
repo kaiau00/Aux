@@ -56,6 +56,7 @@ type ToolPayload struct {
 	Status          string `json:"status,omitempty"`
 	LatencyMS       int64  `json:"latencyMs,omitempty"`
 	ResponseBytes   int64  `json:"responseBytes,omitempty"`
+	SavedBytes      int64  `json:"savedBytes,omitempty"`
 	IsError         bool   `json:"isError,omitempty"`
 	ArtifactID      string `json:"artifactId,omitempty"`
 }

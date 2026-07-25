@@ -14,14 +14,14 @@ import (
 const (
 	ExecStarted   = "started"
 	ExecCompleted = "completed"
-	ExecError     = "error" // tool returned an error ToolResponse (not a Go error)
+	ExecError     = "error"  // tool returned an error ToolResponse (not a Go error)
 	ExecFailed    = "failed" // tool.Run returned a Go error (e.g. permission denied)
 )
 
 // ExecutionRecord is the observability record for a single tool run. It is
 // passed to a Recorder at start and finish. It intentionally carries only
-// identifiers and sizes, never the full tool output (that becomes an artifact in
-// a later phase).
+// identifiers and sizes, never the full tool output (that becomes an artifact
+// via a Virtualizer).
 type ExecutionRecord struct {
 	ID            string
 	Correlation   Correlation
@@ -32,10 +32,20 @@ type ExecutionRecord struct {
 	StartedAt     int64 // unix millis
 	FinishedAt    int64 // unix millis
 	LatencyMS     int64
-	ResponseBytes int64
+	ResponseBytes int64 // original tool-output size
+	BytesSaved    int64 // bytes not sent to the model due to virtualization
 	IsError       bool
 	ArtifactID    string
 	Metadata      string
+}
+
+// Virtualizer may replace a large tool response with a compact digest plus an
+// artifact handle, storing the full output once (roadmapplan.md §7.5). It sets
+// rec.ArtifactID and rec.BytesSaved and returns the (possibly rewritten)
+// response. In observe mode it stores the artifact but returns the response
+// unchanged.
+type Virtualizer interface {
+	Virtualize(ctx context.Context, rec *ExecutionRecord, resp ToolResponse) (ToolResponse, error)
 }
 
 // Recorder persists tool-execution lifecycle and/or emits events. It is
@@ -51,12 +61,13 @@ type Recorder interface {
 // tool's response and error so existing behaviour and permission handling are
 // unchanged (roadmapplan.md §5.4).
 type Executor struct {
-	recorder Recorder
+	recorder    Recorder
+	virtualizer Virtualizer
 }
 
-// NewExecutor returns an executor. recorder may be nil.
-func NewExecutor(recorder Recorder) *Executor {
-	return &Executor{recorder: recorder}
+// NewExecutor returns an executor. recorder and virtualizer may both be nil.
+func NewExecutor(recorder Recorder, virtualizer Virtualizer) *Executor {
+	return &Executor{recorder: recorder, virtualizer: virtualizer}
 }
 
 // Execute runs the tool, recording its lifecycle. The returned response and
@@ -84,6 +95,15 @@ func (e *Executor) Execute(ctx context.Context, tool BaseTool, call ToolCall) (T
 	rec.FinishedAt = time.Now().UnixMilli()
 	rec.ResponseBytes = int64(len(resp.Content))
 	rec.Metadata = resp.Metadata
+
+	// Virtualize large output before recording the final status. Hard tool
+	// failures (Go errors) are left untouched so diagnostics are never hidden.
+	if e.virtualizer != nil && err == nil {
+		if newResp, verr := e.virtualizer.Virtualize(ctx, &rec, resp); verr == nil {
+			resp = newResp
+		}
+	}
+
 	rec.IsError = resp.IsError || err != nil
 	switch {
 	case err != nil:

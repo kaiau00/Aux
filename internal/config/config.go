@@ -125,6 +125,18 @@ type Config struct {
 	AutoCompact       bool                              `json:"autoCompact,omitempty"`
 	SemanticRetrieval SemanticRetrievalConfig           `json:"semanticRetrieval,omitempty"`
 	Ponytail          PonytailConfig                    `json:"ponytail,omitempty"`
+	Context           ContextConfig                     `json:"context,omitempty"`
+}
+
+// ContextConfig controls Context OS behaviour (roadmapplan.md §15.1/§15.2). The
+// tool-output virtualization flag supports off/observe/on and defaults to off so
+// behaviour is unchanged until it is proven against a same-model baseline.
+type ContextConfig struct {
+	// Virtualization is one of "off", "observe", or "on".
+	Virtualization string `json:"virtualization,omitempty"`
+	// ArtifactThresholdBytes is the tool-output size above which virtualization
+	// is a candidate. Zero uses the built-in default.
+	ArtifactThresholdBytes int `json:"artifactThresholdBytes,omitempty"`
 }
 
 // Application constants
@@ -287,6 +299,8 @@ func setDefaults(debug bool) {
 	viper.SetDefault("semanticRetrieval.timeoutSeconds", 15)
 	// Ponytail Protocol is opt-in so users see unopinionated prompts by default.
 	viper.SetDefault("ponytail.enabled", false)
+	viper.SetDefault("context.virtualization", "off")
+	viper.SetDefault("context.artifactThresholdBytes", 0)
 
 	// Set default shell from environment or fallback to /bin/bash
 	shellPath := os.Getenv("SHELL")

@@ -37,7 +37,7 @@ func (c *captureRecorder) Finish(_ context.Context, rec tools.ExecutionRecord) {
 
 func TestExecutorRecordsCompletion(t *testing.T) {
 	rec := &captureRecorder{}
-	ex := tools.NewExecutor(rec)
+	ex := tools.NewExecutor(rec, nil)
 	ft := &fakeTool{name: "grep", resp: tools.NewTextResponse("hello world")}
 
 	ctx := context.WithValue(context.Background(), tools.SessionIDContextKey, "s1")
@@ -76,7 +76,7 @@ func TestExecutorRecordsCompletion(t *testing.T) {
 
 func TestExecutorRecordsToolErrorResponse(t *testing.T) {
 	rec := &captureRecorder{}
-	ex := tools.NewExecutor(rec)
+	ex := tools.NewExecutor(rec, nil)
 	ft := &fakeTool{name: "bash", resp: tools.NewTextErrorResponse("boom")}
 
 	resp, err := ex.Execute(context.Background(), ft, tools.ToolCall{ID: "c", Name: "bash", Input: "{}"})
@@ -93,7 +93,7 @@ func TestExecutorRecordsToolErrorResponse(t *testing.T) {
 
 func TestExecutorPassesThroughGoError(t *testing.T) {
 	rec := &captureRecorder{}
-	ex := tools.NewExecutor(rec)
+	ex := tools.NewExecutor(rec, nil)
 	sentinel := errors.New("permission denied")
 	ft := &fakeTool{name: "edit", err: sentinel}
 
@@ -107,7 +107,7 @@ func TestExecutorPassesThroughGoError(t *testing.T) {
 }
 
 func TestExecutorNilRecorderRunsTool(t *testing.T) {
-	ex := tools.NewExecutor(nil)
+	ex := tools.NewExecutor(nil, nil)
 	ft := &fakeTool{name: "ls", resp: tools.NewTextResponse("ok")}
 	resp, err := ex.Execute(context.Background(), ft, tools.ToolCall{ID: "c", Name: "ls", Input: "{}"})
 	if err != nil || resp.Content != "ok" {

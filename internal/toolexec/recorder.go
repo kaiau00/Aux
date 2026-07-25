@@ -63,6 +63,7 @@ func (r *recorder) emit(evType eventstore.Type, rec tools.ExecutionRecord) {
 			Status:          rec.Status,
 			LatencyMS:       rec.LatencyMS,
 			ResponseBytes:   rec.ResponseBytes,
+			SavedBytes:      rec.BytesSaved,
 			IsError:         rec.IsError,
 			ArtifactID:      rec.ArtifactID,
 		},

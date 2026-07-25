@@ -83,6 +83,7 @@ type Deps struct {
 	Recorder    tools.Recorder
 	Coordinator TaskCoordinator         // optional; top-level agent only
 	Compiler    promptcompiler.Compiler // optional; defaults to compatibility mode
+	Virtualizer tools.Virtualizer       // optional; large tool-output virtualization
 }
 
 type agent struct {
@@ -143,7 +144,7 @@ func NewAgent(
 		events:            deps.Events,
 		coordinator:       deps.Coordinator,
 		compiler:          compiler,
-		executor:          tools.NewExecutor(deps.Recorder),
+		executor:          tools.NewExecutor(deps.Recorder, deps.Virtualizer),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
 		summarizeProvider: summarizeProvider,
