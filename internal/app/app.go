@@ -22,6 +22,8 @@ import (
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/permission"
+	"github.com/aux-ai/aux-cli/internal/profile"
+	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/toolexec"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
@@ -35,6 +37,8 @@ type App struct {
 	Cost         cost.Service
 	Events       eventstore.Service
 	ToolRecorder tools.Recorder
+	Projects     *project.Service
+	Profiles     *profile.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -60,6 +64,8 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	// The tool recorder persists tool_executions and emits tool.* events; the
 	// executor (built inside the agent) routes every tool call through it.
 	toolRecorder := toolexec.NewRecorder(toolexec.NewStore(conn), events)
+	projects := project.NewService(project.NewStore(conn), project.GitVCS{})
+	profiles := profile.NewService(profile.NewStore(conn), profile.NewBuilder(profile.NewStore(conn), profile.DefaultScanners()))
 
 	app := &App{
 		Sessions:     sessions,
@@ -69,11 +75,18 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Cost:         ledger,
 		Events:       events,
 		ToolRecorder: toolRecorder,
+		Projects:     projects,
+		Profiles:     profiles,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 
 	// Initialize theme based on configuration
 	app.initTheme()
+
+	// Resolve project identity and compile its profile in the background so
+	// startup is not blocked on git/filesystem work (best-effort; failures are
+	// logged and do not affect normal operation).
+	go app.resolveProject(ctx)
 
 	// Initialize LSP clients in the background
 	go app.initLSPClients(ctx)
@@ -122,6 +135,30 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	}
 
 	return app, nil
+}
+
+// resolveProject resolves the working directory to a stable project identity,
+// records the current revision, and compiles the project profile. It emits a
+// project.resolved-style signal via a domain event so read models can react.
+func (app *App) resolveProject(ctx context.Context) {
+	defer logging.RecoverPanic("app.resolveProject", nil)
+	res, err := app.Projects.Resolve(ctx, config.WorkingDirectory())
+	if err != nil {
+		logging.Warn("failed to resolve project identity", "error", err)
+		return
+	}
+	logging.Debug("resolved project", "project", res.Project.CanonicalName, "id", res.Project.ID, "branch", res.Revision.BranchName)
+
+	version, _, err := app.Profiles.CompileProject(ctx, res.Project.ID, res.Root.CanonicalPath, res.Revision.VCSRevision)
+	if err != nil {
+		logging.Warn("failed to compile project profile", "error", err)
+		return
+	}
+	// Record the profile-input fingerprint on the revision for staleness checks.
+	if fp, ferr := app.Profiles.InputFingerprint(ctx, res.Root.CanonicalPath); ferr == nil {
+		_ = app.Projects.Store().SetRevisionProfileInputHash(ctx, res.Revision.ID, fp)
+	}
+	logging.Debug("compiled project profile", "version", version.ID, "reused", version.Reused)
 }
 
 // initTheme sets the application theme based on the configuration
