@@ -453,6 +453,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 			StablePrefixID: compiled.StablePrefixID,
 			ResidentPages:  resident,
 			AvailablePages: available,
+			SavedTokens:    compiled.SavedTokens,
 		},
 	})
 	eventChan := a.provider.StreamResponse(ctx, compiled.Messages, compiled.ToolSet)

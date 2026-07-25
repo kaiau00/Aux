@@ -27,6 +27,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
+	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/task"
 	"github.com/aux-ai/aux-cli/internal/toolexec"
@@ -119,6 +120,11 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		artifact.Mode(config.Get().Context.Virtualization),
 		config.Get().Context.ArtifactThresholdBytes,
 	)
+	// Select the prompt compiler: demand paging when enabled, else compatibility.
+	var compiler promptcompiler.Compiler = promptcompiler.NewCompatibilityCompiler()
+	if config.Get().Context.Paging == "on" {
+		compiler = promptcompiler.NewPagingCompiler()
+	}
 	coderDeps := agent.Deps{
 		Sessions:    app.Sessions,
 		Messages:    app.Messages,
@@ -128,6 +134,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Coordinator: app.TaskCoord,
 		Virtualizer: virtualizer,
 		Pages:       app.Pages,
+		Compiler:    compiler,
 	}
 	coderTools := append(
 		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients),

@@ -137,6 +137,9 @@ type ContextConfig struct {
 	// ArtifactThresholdBytes is the tool-output size above which virtualization
 	// is a candidate. Zero uses the built-in default.
 	ArtifactThresholdBytes int `json:"artifactThresholdBytes,omitempty"`
+	// Paging selects the prompt compiler: "off" (compatibility) or "on" (demand
+	// paging: deduplicate repeated identical content). Default off.
+	Paging string `json:"paging,omitempty"`
 }
 
 // Application constants
@@ -301,6 +304,7 @@ func setDefaults(debug bool) {
 	viper.SetDefault("ponytail.enabled", false)
 	viper.SetDefault("context.virtualization", "off")
 	viper.SetDefault("context.artifactThresholdBytes", 0)
+	viper.SetDefault("context.paging", "off")
 
 	// Set default shell from environment or fallback to /bin/bash
 	shellPath := os.Getenv("SHELL")

@@ -50,6 +50,7 @@ type ContextManifest struct {
 	Pages          []PageDescriptor `json:"pages"`
 	ToolCount      int              `json:"toolCount"`
 	TokenEstimate  int64            `json:"tokenEstimate"`
+	SavedTokens    int64            `json:"savedTokens,omitempty"`
 	StablePrefixID string           `json:"stablePrefixId"`
 }
 
@@ -61,6 +62,8 @@ type CompiledPrompt struct {
 	Manifest        ContextManifest
 	StablePrefixID  string
 	EstimatedTokens int64
+	// SavedTokens is the estimated uncached input avoided vs. the full transcript.
+	SavedTokens int64
 }
 
 // Input is the compiler's request.
