@@ -28,6 +28,15 @@ type TurnPayload struct {
 	FinishReason string `json:"finishReason,omitempty"`
 }
 
+// ContextPayload accompanies context.* events (what the prompt compiler produced).
+type ContextPayload struct {
+	CallID         string `json:"callId,omitempty"`
+	MessageCount   int    `json:"messageCount,omitempty"`
+	ToolCount      int    `json:"toolCount,omitempty"`
+	TokenEstimate  int64  `json:"tokenEstimate,omitempty"`
+	StablePrefixID string `json:"stablePrefixId,omitempty"`
+}
+
 // TaskPayload accompanies task.* events.
 type TaskPayload struct {
 	TaskID           string `json:"taskId"`

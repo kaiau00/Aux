@@ -20,6 +20,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/permission"
+	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/runtime"
 	"github.com/aux-ai/aux-cli/internal/session"
@@ -80,7 +81,8 @@ type Deps struct {
 	Ledger      cost.Service
 	Events      eventstore.Service
 	Recorder    tools.Recorder
-	Coordinator TaskCoordinator // optional; top-level agent only
+	Coordinator TaskCoordinator         // optional; top-level agent only
+	Compiler    promptcompiler.Compiler // optional; defaults to compatibility mode
 }
 
 type agent struct {
@@ -90,6 +92,7 @@ type agent struct {
 	ledger      cost.Service
 	events      eventstore.Service
 	coordinator TaskCoordinator
+	compiler    promptcompiler.Compiler
 	executor    *tools.Executor
 
 	tools    []tools.BaseTool
@@ -126,6 +129,11 @@ func NewAgent(
 		}
 	}
 
+	compiler := deps.Compiler
+	if compiler == nil {
+		compiler = promptcompiler.NewCompatibilityCompiler()
+	}
+
 	agent := &agent{
 		Broker:            pubsub.NewBroker[AgentEvent](),
 		provider:          agentProvider,
@@ -134,6 +142,7 @@ func NewAgent(
 		ledger:            deps.Ledger,
 		events:            deps.Events,
 		coordinator:       deps.Coordinator,
+		compiler:          compiler,
 		executor:          tools.NewExecutor(deps.Recorder),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
@@ -396,7 +405,6 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 		TurnID:  turnID,
 		Payload: eventstore.TurnPayload{TurnID: turnID},
 	})
-	eventChan := a.provider.StreamResponse(ctx, msgHistory, a.tools)
 
 	assistantMsg, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:  message.Assistant,
@@ -413,6 +421,30 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// Open the per-call ledger record and expose its id to tools for correlation.
 	tracker := a.startCall(ctx, sessionID, turnID, assistantMsg.ID)
 	ctx = context.WithValue(ctx, tools.ModelCallIDContextKey, tracker.id)
+
+	// Compile the model-facing prompt from durable history, separately from how
+	// that history is stored/displayed. In compatibility mode the compiled
+	// messages equal the cleaned transcript, so behaviour is unchanged; the
+	// manifest is recorded for inspection and reconciliation.
+	corr := tools.CorrelationFromContext(ctx)
+	compiled := a.compiler.Compile(promptcompiler.Input{
+		TaskID:  corr.TaskID,
+		CallID:  tracker.id,
+		History: msgHistory,
+		Tools:   a.tools,
+	})
+	a.emit(ctx, eventstore.Append{
+		Type:   eventstore.ContextCompiled,
+		TurnID: turnID,
+		Payload: eventstore.ContextPayload{
+			CallID:         tracker.id,
+			MessageCount:   len(compiled.Messages),
+			ToolCount:      compiled.Manifest.ToolCount,
+			TokenEstimate:  compiled.EstimatedTokens,
+			StablePrefixID: compiled.StablePrefixID,
+		},
+	})
+	eventChan := a.provider.StreamResponse(ctx, compiled.Messages, compiled.ToolSet)
 
 	// Process each event in the stream.
 	for event := range eventChan {
