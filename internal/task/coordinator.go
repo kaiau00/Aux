@@ -11,6 +11,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
+	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 )
 
 // ProjectResolver resolves a working directory to a project identity.
@@ -111,6 +112,9 @@ func (c *Coordinator) Begin(ctx context.Context, sessionID, objective string) (c
 
 	ctx = context.WithValue(ctx, tools.TaskIDContextKey, taskID)
 	ctx = context.WithValue(ctx, tools.ProjectIDContextKey, res.Project.ID)
+	// Offer the compiled project manifest and task spec to the prompt compiler as
+	// available context pages (roadmapplan.md §7.1).
+	ctx = promptcompiler.WithProjectContext(ctx, eff.Manifest, spec.RenderText())
 	return ctx, taskID, nil
 }
 

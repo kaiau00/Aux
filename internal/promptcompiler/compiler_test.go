@@ -79,6 +79,61 @@ func TestCompilerPreservesToolCallResultOrder(t *testing.T) {
 	}
 }
 
+func TestCompileDecomposesIntoPages(t *testing.T) {
+	c := promptcompiler.NewCompatibilityCompiler()
+	in := promptcompiler.Input{
+		TaskID:          "task-1",
+		History:         history(),
+		ProjectManifest: "# Project profile\nLanguages: go\n",
+		TaskSpecText:    "Task (implementation): add feature",
+	}
+	out := c.Compile(in)
+	pages := out.Manifest.Pages
+
+	// Three transcript messages -> three resident pages; the tool message is a
+	// tool_digest page.
+	var resident, available int
+	var haveToolDigest, haveManifest, haveSpec bool
+	var residentTokens int64
+	for _, p := range pages {
+		switch p.State {
+		case "resident":
+			resident++
+			residentTokens += p.TokenEstimate
+		case "available":
+			available++
+		}
+		if p.Kind == "tool_digest" {
+			haveToolDigest = true
+		}
+		if p.Kind == "project_manifest" {
+			haveManifest = true
+		}
+		if p.Kind == "task_spec" {
+			haveSpec = true
+		}
+	}
+	if resident != 3 {
+		t.Fatalf("expected 3 resident pages (one per message), got %d", resident)
+	}
+	if available != 2 || !haveManifest || !haveSpec {
+		t.Fatalf("expected project_manifest + task_spec available pages")
+	}
+	if !haveToolDigest {
+		t.Fatalf("tool message should become a tool_digest page")
+	}
+	// Resident page tokens reconcile with the prompt token estimate within
+	// per-page rounding tolerance (roadmapplan.md §7.2 "within tokenizer
+	// tolerance"): each page rounds up independently.
+	delta := residentTokens - out.EstimatedTokens
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > int64(resident) {
+		t.Fatalf("resident page tokens (%d) do not reconcile with prompt estimate (%d)", residentTokens, out.EstimatedTokens)
+	}
+}
+
 func TestStablePrefixDependsOnToolSetNotOrder(t *testing.T) {
 	c := promptcompiler.NewCompatibilityCompiler()
 	a := c.Compile(promptcompiler.Input{Tools: []tools.BaseTool{fakeTool{"grep"}, fakeTool{"edit"}}})

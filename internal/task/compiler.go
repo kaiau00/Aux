@@ -2,11 +2,38 @@ package task
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/profile"
 )
+
+// RenderText produces a compact, model-facing summary of a spec for use as an
+// available context page.
+func (s Spec) RenderText() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Task (%s): %s\n", s.Mode, s.Objective)
+	if len(s.Constraints) > 0 {
+		b.WriteString("Constraints:\n")
+		for _, c := range s.Constraints {
+			fmt.Fprintf(&b, "  - %s\n", c)
+		}
+	}
+	if len(s.AcceptanceCriteria) > 0 {
+		b.WriteString("Acceptance criteria:\n")
+		for _, c := range s.AcceptanceCriteria {
+			fmt.Fprintf(&b, "  - %s\n", c.Description)
+		}
+	}
+	if len(s.ValidationIntents) > 0 {
+		b.WriteString("Validation:\n")
+		for _, v := range s.ValidationIntents {
+			fmt.Fprintf(&b, "  - %s: %s\n", v.Intent, v.Command)
+		}
+	}
+	return b.String()
+}
 
 // defaultBudget returns a mode-appropriate budget policy. Values are directional
 // defaults; the Cost Governor (Phase 1.4) refines them from measured evidence.

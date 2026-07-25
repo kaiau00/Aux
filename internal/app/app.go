@@ -12,6 +12,7 @@ import (
 
 	"github.com/aux-ai/aux-cli/internal/artifact"
 	"github.com/aux-ai/aux-cli/internal/config"
+	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/dashboard"
 	"github.com/aux-ai/aux-cli/internal/db"
@@ -45,6 +46,7 @@ type App struct {
 	Tasks        *task.Store
 	TaskCoord    *task.Coordinator
 	Artifacts    *artifact.Service
+	Pages        *contextstore.Store
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -79,6 +81,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		artifact.NewFSBackend(filepath.Join(config.Get().Data.Directory, "artifacts")),
 		artifact.NewStore(conn),
 	)
+	pages := contextstore.NewStore(conn)
 
 	app := &App{
 		Sessions:     sessions,
@@ -93,6 +96,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Tasks:        taskStore,
 		TaskCoord:    taskCoord,
 		Artifacts:    artifacts,
+		Pages:        pages,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 
@@ -123,6 +127,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Recorder:    app.ToolRecorder,
 		Coordinator: app.TaskCoord,
 		Virtualizer: virtualizer,
+		Pages:       app.Pages,
 	}
 	coderTools := append(
 		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients),

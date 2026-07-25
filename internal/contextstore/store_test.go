@@ -1,0 +1,91 @@
+package contextstore_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/aux-ai/aux-cli/internal/contextstore"
+	"github.com/aux-ai/aux-cli/internal/db/dbtest"
+)
+
+func TestPageAndVersionDedup(t *testing.T) {
+	store := contextstore.NewStore(dbtest.New(t))
+	ctx := context.Background()
+
+	p1, err := store.UpsertPage(ctx, "proj", contextstore.KindFileRegion, "file:/a.go", "")
+	if err != nil {
+		t.Fatalf("UpsertPage: %v", err)
+	}
+	p2, err := store.UpsertPage(ctx, "proj", contextstore.KindFileRegion, "file:/a.go", "")
+	if err != nil {
+		t.Fatalf("UpsertPage 2: %v", err)
+	}
+	if p1.ID != p2.ID {
+		t.Fatalf("same page identity should dedup: %s != %s", p1.ID, p2.ID)
+	}
+
+	v1, err := store.UpsertVersion(ctx, p1.ID, "hashA", "rev1", 100)
+	if err != nil {
+		t.Fatalf("UpsertVersion: %v", err)
+	}
+	v2, _ := store.UpsertVersion(ctx, p1.ID, "hashA", "rev1", 100)
+	if v1.ID != v2.ID {
+		t.Fatalf("same content hash should dedup version")
+	}
+	v3, _ := store.UpsertVersion(ctx, p1.ID, "hashB", "rev2", 120)
+	if v3.ID == v1.ID {
+		t.Fatalf("different content hash should be a new version")
+	}
+}
+
+func TestBindAndExplainByPage(t *testing.T) {
+	store := contextstore.NewStore(dbtest.New(t))
+	ctx := context.Background()
+
+	page, _ := store.UpsertPage(ctx, "proj", contextstore.KindToolDigest, "msg:1", "")
+	ver, _ := store.UpsertVersion(ctx, page.ID, "hash1", "", 42)
+	if err := store.Bind(ctx, contextstore.Binding{
+		TaskID: "task-1", ModelCallID: "call-1", PageVersionID: ver.ID,
+		State: contextstore.StateResident, Rank: 0, Reason: "transcript", TokenCount: 42,
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	// A second, available page for the same call.
+	page2, _ := store.UpsertPage(ctx, "proj", contextstore.KindProjectManifest, "project_manifest", "")
+	ver2, _ := store.UpsertVersion(ctx, page2.ID, "hash2", "", 10)
+	_ = store.Bind(ctx, contextstore.Binding{
+		ModelCallID: "call-1", PageVersionID: ver2.ID, State: contextstore.StateAvailable, Rank: 1,
+	})
+
+	bound, err := store.BindingsForCall(ctx, "call-1")
+	if err != nil {
+		t.Fatalf("BindingsForCall: %v", err)
+	}
+	if len(bound) != 2 {
+		t.Fatalf("expected 2 bound pages for the call, got %d", len(bound))
+	}
+	// Ordered by state (available < resident alphabetically).
+	var residentFound, availableFound bool
+	for _, bp := range bound {
+		if bp.State == contextstore.StateResident && bp.PageType == contextstore.KindToolDigest {
+			residentFound = true
+		}
+		if bp.State == contextstore.StateAvailable && bp.PageType == contextstore.KindProjectManifest {
+			availableFound = true
+		}
+	}
+	if !residentFound || !availableFound {
+		t.Fatalf("bindings did not explain the prompt page by page: %+v", bound)
+	}
+}
+
+func TestRecordAccess(t *testing.T) {
+	store := contextstore.NewStore(dbtest.New(t))
+	ctx := context.Background()
+	page, _ := store.UpsertPage(ctx, "", contextstore.KindFileRegion, "file:/x", "")
+	ver, _ := store.UpsertVersion(ctx, page.ID, "h", "", 1)
+	if err := store.RecordAccess(ctx, "task", "call", ver.ID, "read", "later_edit"); err != nil {
+		t.Fatalf("RecordAccess: %v", err)
+	}
+}

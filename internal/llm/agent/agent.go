@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/config"
+	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/ids"
@@ -84,6 +85,7 @@ type Deps struct {
 	Coordinator TaskCoordinator         // optional; top-level agent only
 	Compiler    promptcompiler.Compiler // optional; defaults to compatibility mode
 	Virtualizer tools.Virtualizer       // optional; large tool-output virtualization
+	Pages       *contextstore.Store     // optional; records page bindings per call
 }
 
 type agent struct {
@@ -94,6 +96,7 @@ type agent struct {
 	events      eventstore.Service
 	coordinator TaskCoordinator
 	compiler    promptcompiler.Compiler
+	pages       *contextstore.Store
 	executor    *tools.Executor
 
 	tools    []tools.BaseTool
@@ -144,6 +147,7 @@ func NewAgent(
 		events:            deps.Events,
 		coordinator:       deps.Coordinator,
 		compiler:          compiler,
+		pages:             deps.Pages,
 		executor:          tools.NewExecutor(deps.Recorder, deps.Virtualizer),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
@@ -428,12 +432,16 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// messages equal the cleaned transcript, so behaviour is unchanged; the
 	// manifest is recorded for inspection and reconciliation.
 	corr := tools.CorrelationFromContext(ctx)
+	projectManifest, taskSpecText := promptcompiler.ProjectContextFromContext(ctx)
 	compiled := a.compiler.Compile(promptcompiler.Input{
-		TaskID:  corr.TaskID,
-		CallID:  tracker.id,
-		History: msgHistory,
-		Tools:   a.tools,
+		TaskID:          corr.TaskID,
+		CallID:          tracker.id,
+		History:         msgHistory,
+		Tools:           a.tools,
+		ProjectManifest: projectManifest,
+		TaskSpecText:    taskSpecText,
 	})
+	resident, available := a.bindPages(ctx, corr.TaskID, tracker.id, compiled)
 	a.emit(ctx, eventstore.Append{
 		Type:   eventstore.ContextCompiled,
 		TurnID: turnID,
@@ -443,6 +451,8 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 			ToolCount:      compiled.Manifest.ToolCount,
 			TokenEstimate:  compiled.EstimatedTokens,
 			StablePrefixID: compiled.StablePrefixID,
+			ResidentPages:  resident,
+			AvailablePages: available,
 		},
 	})
 	eventChan := a.provider.StreamResponse(ctx, compiled.Messages, compiled.ToolSet)
@@ -714,6 +724,46 @@ func (a *agent) startCall(ctx context.Context, sessionID, turnID, messageID stri
 		},
 	})
 	return t
+}
+
+// bindPages persists the compiled prompt's page descriptors as durable pages,
+// versions, and per-call bindings so the prompt can be explained page by page
+// (roadmapplan.md §7.1, §19 PR 10). Failures are logged, never fatal.
+func (a *agent) bindPages(ctx context.Context, taskID, callID string, compiled promptcompiler.CompiledPrompt) (resident, available int) {
+	if a.pages == nil {
+		return 0, 0
+	}
+	corr := tools.CorrelationFromContext(ctx)
+	for i, pd := range compiled.Manifest.Pages {
+		page, err := a.pages.UpsertPage(ctx, corr.ProjectID, pd.Kind, pd.StableKey, "")
+		if err != nil {
+			logging.Error("failed to upsert context page", "error", err)
+			continue
+		}
+		ver, err := a.pages.UpsertVersion(ctx, page.ID, pd.ContentHash, "", pd.TokenEstimate)
+		if err != nil {
+			logging.Error("failed to upsert page version", "error", err)
+			continue
+		}
+		if err := a.pages.Bind(ctx, contextstore.Binding{
+			TaskID:        taskID,
+			ModelCallID:   callID,
+			PageVersionID: ver.ID,
+			State:         pd.State,
+			Rank:          i,
+			Reason:        pd.Reason,
+			TokenCount:    pd.TokenEstimate,
+		}); err != nil {
+			logging.Error("failed to bind page", "error", err)
+			continue
+		}
+		if pd.State == contextstore.StateResident {
+			resident++
+		} else {
+			available++
+		}
+	}
+	return resident, available
 }
 
 // onFirstToken records the first-token time once and emits a

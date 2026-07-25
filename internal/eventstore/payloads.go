@@ -35,6 +35,8 @@ type ContextPayload struct {
 	ToolCount      int    `json:"toolCount,omitempty"`
 	TokenEstimate  int64  `json:"tokenEstimate,omitempty"`
 	StablePrefixID string `json:"stablePrefixId,omitempty"`
+	ResidentPages  int    `json:"residentPages,omitempty"`
+	AvailablePages int    `json:"availablePages,omitempty"`
 }
 
 // TaskPayload accompanies task.* events.

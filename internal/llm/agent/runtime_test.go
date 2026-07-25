@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/db"
 	"github.com/aux-ai/aux-cli/internal/db/dbtest"
@@ -55,6 +56,7 @@ func newTurnAgent(t *testing.T, p provider.Provider, toolset ...tools.BaseTool) 
 		ledger:   ledger,
 		events:   events,
 		compiler: promptcompiler.NewCompatibilityCompiler(),
+		pages:    contextstore.NewStore(conn),
 		executor: tools.NewExecutor(recorder, nil),
 		tools:    toolset,
 		provider: p,
@@ -195,6 +197,34 @@ func TestRunTurnCancellationFinalizesCall(t *testing.T) {
 	}
 	if calls[0].Status != cost.CallCancelled {
 		t.Fatalf("call status = %q, want cancelled", calls[0].Status)
+	}
+}
+
+func TestRunTurnBindsPagesToCall(t *testing.T) {
+	p := provider.NewMockProvider(mockModel(),
+		provider.TextTurn("ack", provider.TokenUsage{InputTokens: 5, OutputTokens: 2}))
+	a, _, ledger, sessID := newTurnAgent(t, p)
+	ctx := context.Background()
+
+	history := []message.Message{
+		{Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "please help"}}},
+	}
+	if _, err := a.RunTurn(ctx, sessID, history); err != nil {
+		t.Fatalf("RunTurn: %v", err)
+	}
+
+	calls, err := ledger.ListCallsBySession(ctx, sessID)
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("expected one call, err=%v", err)
+	}
+	bound, err := a.pages.BindingsForCall(ctx, calls[0].ID)
+	if err != nil {
+		t.Fatalf("BindingsForCall: %v", err)
+	}
+	// The single history message must be bound as a resident page to this call,
+	// so the compiled prompt is explainable page by page.
+	if len(bound) != 1 || bound[0].State != contextstore.StateResident {
+		t.Fatalf("expected one resident page bound to the call, got %+v", bound)
 	}
 }
 
