@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/config"
+	"github.com/aux-ai/aux-cli/internal/cost"
+	"github.com/aux-ai/aux-cli/internal/ids"
 	llmcontext "github.com/aux-ai/aux-cli/internal/llm/context"
 	"github.com/aux-ai/aux-cli/internal/llm/models"
 	"github.com/aux-ai/aux-cli/internal/llm/prompt"
@@ -61,6 +63,7 @@ type agent struct {
 	*pubsub.Broker[AgentEvent]
 	sessions session.Service
 	messages message.Service
+	ledger   cost.Service
 
 	tools    []tools.BaseTool
 	provider provider.Provider
@@ -75,6 +78,7 @@ func NewAgent(
 	agentName config.AgentName,
 	sessions session.Service,
 	messages message.Service,
+	ledger cost.Service,
 	agentTools []tools.BaseTool,
 ) (Service, error) {
 	agentProvider, err := createAgentProvider(agentName)
@@ -102,6 +106,7 @@ func NewAgent(
 		provider:          agentProvider,
 		messages:          messages,
 		sessions:          sessions,
+		ledger:            ledger,
 		tools:             agentTools,
 		titleProvider:     titleProvider,
 		summarizeProvider: summarizeProvider,
@@ -322,7 +327,12 @@ func (a *agent) createUserMessage(ctx context.Context, sessionID, content string
 }
 
 func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msgHistory []message.Message) (message.Message, *message.Message, error) {
+	// A turn is one iteration of the agent loop: one model call plus the tool
+	// results it produced. Correlation IDs let every downstream record (model
+	// call, tool execution, event) be reconstructed without parsing message JSON.
+	turnID := ids.New()
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, sessionID)
+	ctx = context.WithValue(ctx, tools.TurnIDContextKey, turnID)
 	eventChan := a.provider.StreamResponse(ctx, msgHistory, a.tools)
 
 	assistantMsg, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
@@ -337,17 +347,26 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// Add the session and message ID into the context if needed by tools.
 	ctx = context.WithValue(ctx, tools.MessageIDContextKey, assistantMsg.ID)
 
+	// Open the per-call ledger record and expose its id to tools for correlation.
+	tracker := a.startCall(ctx, sessionID, turnID, assistantMsg.ID)
+	ctx = context.WithValue(ctx, tools.ModelCallIDContextKey, tracker.id)
+
 	// Process each event in the stream.
 	for event := range eventChan {
-		if processErr := a.processEvent(ctx, sessionID, &assistantMsg, event); processErr != nil {
+		if processErr := a.processEvent(ctx, sessionID, tracker, &assistantMsg, event); processErr != nil {
 			a.finishMessage(ctx, &assistantMsg, message.FinishReasonCanceled)
+			a.abortCall(tracker, processErr)
 			return assistantMsg, nil, processErr
 		}
 		if ctx.Err() != nil {
 			a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled)
+			a.abortCall(tracker, ctx.Err())
 			return assistantMsg, nil, ctx.Err()
 		}
 	}
+	// Safety net: if the stream closed without an explicit completion event, close
+	// the ledger record so it never remains in the `started` state.
+	a.finalizeCallIfOpen(context.Background(), tracker, sessionID)
 
 	toolResults := make([]message.ToolResult, len(assistantMsg.ToolCalls()))
 	toolCalls := assistantMsg.ToolCalls()
@@ -444,7 +463,7 @@ func (a *agent) finishMessage(ctx context.Context, msg *message.Message, finishR
 	_ = a.messages.Update(ctx, *msg)
 }
 
-func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg *message.Message, event provider.ProviderEvent) error {
+func (a *agent) processEvent(ctx context.Context, sessionID string, tracker *callTracker, assistantMsg *message.Message, event provider.ProviderEvent) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -461,12 +480,15 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		if thinking == "" {
 			return nil
 		}
+		tracker.markFirstToken()
 		assistantMsg.AppendReasoningContent(thinking)
 		return a.messages.Update(ctx, *assistantMsg)
 	case provider.EventContentDelta:
+		tracker.markFirstToken()
 		assistantMsg.AppendContent(event.Content)
 		return a.messages.Update(ctx, *assistantMsg)
 	case provider.EventToolUseStart:
+		tracker.markFirstToken()
 		assistantMsg.AddToolCall(*event.ToolCall)
 		return a.messages.Update(ctx, *assistantMsg)
 	// TODO: see how to handle this
@@ -494,30 +516,154 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, assistantMsg
 		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
 			return fmt.Errorf("failed to update message: %w", err)
 		}
-		return a.TrackUsage(ctx, sessionID, a.provider.Model(), event.Response.Usage)
+		return a.completeCall(ctx, tracker, sessionID, event.Response.Usage)
 	}
 
 	return nil
 }
 
-func (a *agent) TrackUsage(ctx context.Context, sessionID string, model models.Model, usage provider.TokenUsage) error {
+// callTracker holds the mutable timing state for one in-flight model call so the
+// ledger row can record time-to-first-token and total latency.
+type callTracker struct {
+	id           string
+	model        models.Model
+	startedAt    time.Time
+	firstTokenAt time.Time
+	finalized    bool
+}
+
+func (t *callTracker) markFirstToken() {
+	if t != nil && t.firstTokenAt.IsZero() {
+		t.firstTokenAt = time.Now()
+	}
+}
+
+// startCall opens a ledger record for the model call about to stream and returns
+// a tracker. The tracker always carries a fresh id (even when no ledger is
+// configured) so tool executions can be correlated to the call.
+func (a *agent) startCall(ctx context.Context, sessionID, turnID, messageID string) *callTracker {
+	model := a.provider.Model()
+	t := &callTracker{
+		id:        ids.New(),
+		model:     model,
+		startedAt: time.Now(),
+	}
+	if a.ledger == nil {
+		return t
+	}
+	corr := tools.CorrelationFromContext(ctx)
+	if _, err := a.ledger.StartCall(ctx, cost.ModelCall{
+		ID:        t.id,
+		ProjectID: corr.ProjectID,
+		TaskID:    corr.TaskID,
+		TurnID:    turnID,
+		SessionID: sessionID,
+		MessageID: messageID,
+		Provider:  string(model.Provider),
+		Model:     string(model.ID),
+		Status:    cost.CallStarted,
+		StartedAt: t.startedAt.UnixMilli(),
+	}); err != nil {
+		logging.Error("failed to record model call start", "error", err)
+	}
+	return t
+}
+
+// completeCall finalizes the ledger record with usage/cost and then re-derives
+// the session token and cost totals from the ledger (never overwriting with a
+// single call's usage). See roadmapplan.md §5.2.
+func (a *agent) completeCall(ctx context.Context, tracker *callTracker, sessionID string, usage provider.TokenUsage) error {
+	if tracker != nil && !tracker.finalized && a.ledger != nil {
+		tracker.finalized = true
+		now := time.Now()
+		estCost, state := cost.ComputeCost(tracker.model, usage)
+		mc := cost.ModelCall{
+			ID:                  tracker.id,
+			Status:              cost.CallCompleted,
+			CostState:           state,
+			PriceCatalogVersion: cost.PriceCatalogVersion,
+			FinishedAt:          now.UnixMilli(),
+			LatencyMS:           now.Sub(tracker.startedAt).Milliseconds(),
+			InputTokens:         usage.InputTokens,
+			OutputTokens:        usage.OutputTokens,
+			CacheCreationTokens: usage.CacheCreationTokens,
+			CacheReadTokens:     usage.CacheReadTokens,
+			EstimatedCost:       estCost,
+		}
+		if !tracker.firstTokenAt.IsZero() {
+			mc.FirstTokenAt = tracker.firstTokenAt.UnixMilli()
+			mc.TTFTMS = tracker.firstTokenAt.Sub(tracker.startedAt).Milliseconds()
+		}
+		if err := a.ledger.FinishCall(ctx, mc); err != nil {
+			logging.Error("failed to finalize model call", "error", err)
+		}
+	} else if tracker != nil {
+		tracker.finalized = true
+	}
+	return a.reconcileSession(ctx, sessionID)
+}
+
+// abortCall records a failed or cancelled model call. It uses a background
+// context because the request context is usually already cancelled here.
+func (a *agent) abortCall(tracker *callTracker, cause error) {
+	if tracker == nil || tracker.finalized || a.ledger == nil {
+		return
+	}
+	tracker.finalized = true
+	now := time.Now()
+	status := cost.CallFailed
+	errCode := "error"
+	if errors.Is(cause, context.Canceled) {
+		status = cost.CallCancelled
+		errCode = "cancelled"
+	}
+	mc := cost.ModelCall{
+		ID:         tracker.id,
+		Status:     status,
+		CostState:  cost.CostKnown,
+		FinishedAt: now.UnixMilli(),
+		LatencyMS:  now.Sub(tracker.startedAt).Milliseconds(),
+		ErrorCode:  errCode,
+	}
+	if !tracker.firstTokenAt.IsZero() {
+		mc.FirstTokenAt = tracker.firstTokenAt.UnixMilli()
+		mc.TTFTMS = tracker.firstTokenAt.Sub(tracker.startedAt).Milliseconds()
+	}
+	if err := a.ledger.FinishCall(context.Background(), mc); err != nil {
+		logging.Error("failed to record aborted model call", "error", err)
+	}
+}
+
+// finalizeCallIfOpen closes a ledger record for a stream that ended cleanly but
+// never emitted an explicit completion event.
+func (a *agent) finalizeCallIfOpen(ctx context.Context, tracker *callTracker, sessionID string) {
+	if tracker == nil || tracker.finalized {
+		return
+	}
+	if err := a.completeCall(ctx, tracker, sessionID, provider.TokenUsage{}); err != nil {
+		logging.Error("failed to close open model call", "error", err)
+	}
+}
+
+// reconcileSession recomputes the session's token and cost totals from the
+// durable call ledger so they always reconcile with the underlying records.
+func (a *agent) reconcileSession(ctx context.Context, sessionID string) error {
+	if a.ledger == nil {
+		return nil
+	}
+	totals, err := a.ledger.SessionTotals(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to compute session totals: %w", err)
+	}
 	sess, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
-
-	cost := model.CostPer1MInCached/1e6*float64(usage.CacheCreationTokens) +
-		model.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
-		model.CostPer1MIn/1e6*float64(usage.InputTokens) +
-		model.CostPer1MOut/1e6*float64(usage.OutputTokens)
-
-	sess.Cost += cost
-	sess.CompletionTokens = usage.OutputTokens + usage.CacheReadTokens
-	sess.PromptTokens = usage.InputTokens + usage.CacheCreationTokens
-
-	_, err = a.sessions.Save(ctx, sess)
-	if err != nil {
-		return fmt.Errorf("failed to save session: %w", err)
+	sess.PromptTokens = totals.PromptTokens
+	sess.CompletionTokens = totals.CompletionTokens
+	sess.Cost = totals.Cost
+	if _, err := a.sessions.Save(ctx, sess); err != nil {
+		return fmt.Errorf("failed to save session totals: %w", err)
 	}
 	return nil
 }

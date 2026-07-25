@@ -1,0 +1,239 @@
+package cost
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/aux-ai/aux-cli/internal/db"
+)
+
+// Service persists and reads the per-call model ledger.
+//
+// Reads for session/task totals are computed with SQL aggregation so they always
+// reconcile with the underlying rows (roadmapplan.md Phase 1.0 exit gate:
+// "Token and cost totals reconcile from call to task to session").
+type Service interface {
+	// StartCall inserts a call in the `started` state and returns it.
+	StartCall(ctx context.Context, call ModelCall) (ModelCall, error)
+	// FinishCall updates a started call to a terminal state with final usage,
+	// timing, and cost.
+	FinishCall(ctx context.Context, call ModelCall) error
+	// GetCall returns a single call by id.
+	GetCall(ctx context.Context, id string) (ModelCall, error)
+	// ListCallsBySession returns calls for a session ordered by start time.
+	ListCallsBySession(ctx context.Context, sessionID string) ([]ModelCall, error)
+	// ListCallsByTask returns calls for a task ordered by start time.
+	ListCallsByTask(ctx context.Context, taskID string) ([]ModelCall, error)
+	// SessionTotals aggregates completed/failed calls for a session.
+	SessionTotals(ctx context.Context, sessionID string) (Totals, error)
+	// TaskTotals aggregates completed/failed calls for a task.
+	TaskTotals(ctx context.Context, taskID string) (Totals, error)
+}
+
+type service struct {
+	db db.DBTX
+}
+
+// NewService returns a ledger backed by the given database handle.
+func NewService(dbtx db.DBTX) Service {
+	return &service{db: dbtx}
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func (s *service) StartCall(ctx context.Context, call ModelCall) (ModelCall, error) {
+	if call.Status == "" {
+		call.Status = CallStarted
+	}
+	if call.PriceCatalogVersion == "" {
+		call.PriceCatalogVersion = PriceCatalogVersion
+	}
+	if call.CostState == "" {
+		call.CostState = CostKnown
+	}
+	const q = `
+INSERT INTO model_calls (
+    model_call_id, project_id, task_id, turn_id, session_id, message_id,
+    provider, model, status, retry_group, price_catalog_version, cost_state,
+    started_at, finished_at, first_token_at, latency_ms, ttft_ms,
+    input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+    estimated_cost, error_code
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	_, err := s.db.ExecContext(ctx, q,
+		call.ID, nullable(call.ProjectID), nullable(call.TaskID), nullable(call.TurnID),
+		nullable(call.SessionID), nullable(call.MessageID),
+		call.Provider, call.Model, string(call.Status), nullable(call.RetryGroup),
+		call.PriceCatalogVersion, string(call.CostState),
+		call.StartedAt, nullOrInt(call.FinishedAt), nullOrInt(call.FirstTokenAt),
+		call.LatencyMS, call.TTFTMS,
+		call.InputTokens, call.OutputTokens, call.CacheCreationTokens, call.CacheReadTokens,
+		call.EstimatedCost, call.ErrorCode,
+	)
+	if err != nil {
+		return ModelCall{}, fmt.Errorf("failed to insert model call: %w", err)
+	}
+	return call, nil
+}
+
+func (s *service) FinishCall(ctx context.Context, call ModelCall) error {
+	if call.PriceCatalogVersion == "" {
+		call.PriceCatalogVersion = PriceCatalogVersion
+	}
+	const q = `
+UPDATE model_calls SET
+    status = ?, cost_state = ?, price_catalog_version = ?,
+    finished_at = ?, first_token_at = ?, latency_ms = ?, ttft_ms = ?,
+    input_tokens = ?, output_tokens = ?, cache_creation_tokens = ?, cache_read_tokens = ?,
+    estimated_cost = ?, error_code = ?
+WHERE model_call_id = ?`
+	res, err := s.db.ExecContext(ctx, q,
+		string(call.Status), string(call.CostState), call.PriceCatalogVersion,
+		nullOrInt(call.FinishedAt), nullOrInt(call.FirstTokenAt), call.LatencyMS, call.TTFTMS,
+		call.InputTokens, call.OutputTokens, call.CacheCreationTokens, call.CacheReadTokens,
+		call.EstimatedCost, call.ErrorCode,
+		call.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to finish model call: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("model call %s not found", call.ID)
+	}
+	return nil
+}
+
+func (s *service) GetCall(ctx context.Context, id string) (ModelCall, error) {
+	const q = `SELECT ` + callColumns + ` FROM model_calls WHERE model_call_id = ?`
+	row := s.db.QueryRowContext(ctx, q, id)
+	return scanCall(row)
+}
+
+func (s *service) ListCallsBySession(ctx context.Context, sessionID string) ([]ModelCall, error) {
+	return s.listCalls(ctx, `WHERE session_id = ? ORDER BY started_at ASC, model_call_id ASC`, sessionID)
+}
+
+func (s *service) ListCallsByTask(ctx context.Context, taskID string) ([]ModelCall, error) {
+	return s.listCalls(ctx, `WHERE task_id = ? ORDER BY started_at ASC, model_call_id ASC`, taskID)
+}
+
+func (s *service) listCalls(ctx context.Context, where string, args ...any) ([]ModelCall, error) {
+	q := `SELECT ` + callColumns + ` FROM model_calls ` + where
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list model calls: %w", err)
+	}
+	defer rows.Close()
+	var calls []ModelCall
+	for rows.Next() {
+		call, err := scanCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		calls = append(calls, call)
+	}
+	return calls, rows.Err()
+}
+
+func (s *service) SessionTotals(ctx context.Context, sessionID string) (Totals, error) {
+	t, err := s.totals(ctx, "session_id", sessionID)
+	if err != nil {
+		return Totals{}, err
+	}
+	// Roll up direct child (subagent) session costs. Each child session's stored
+	// cost is itself reconciled from its own ledger, so summing direct children
+	// yields the full recursive spend. This preserves the historical
+	// "parent session cost includes subagent spend" behaviour idempotently.
+	// Reading the sessions table here is a deliberate, documented boundary bend
+	// (the ledger is the natural owner of "how much did this session cost").
+	row := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(cost),0) FROM sessions WHERE parent_session_id = ?`, sessionID)
+	var childCost float64
+	if err := row.Scan(&childCost); err != nil {
+		return Totals{}, fmt.Errorf("failed to sum child session costs: %w", err)
+	}
+	t.Cost += childCost
+	return t, nil
+}
+
+func (s *service) TaskTotals(ctx context.Context, taskID string) (Totals, error) {
+	return s.totals(ctx, "task_id", taskID)
+}
+
+// totals aggregates all non-started calls (completed, failed, cancelled) so that
+// usage reported by the provider for cancelled/failed calls is still counted
+// (roadmapplan.md §5.2).
+func (s *service) totals(ctx context.Context, column, value string) (Totals, error) {
+	q := fmt.Sprintf(`
+SELECT
+    COUNT(*),
+    COALESCE(SUM(input_tokens),0),
+    COALESCE(SUM(output_tokens),0),
+    COALESCE(SUM(cache_creation_tokens),0),
+    COALESCE(SUM(cache_read_tokens),0),
+    COALESCE(SUM(estimated_cost),0),
+    COALESCE(SUM(CASE WHEN cost_state = 'cost_unknown' THEN 1 ELSE 0 END),0)
+FROM model_calls
+WHERE %s = ? AND status != 'started'`, column)
+	row := s.db.QueryRowContext(ctx, q, value)
+	var t Totals
+	var unknownCount int64
+	if err := row.Scan(&t.Calls, &t.InputTokens, &t.OutputTokens,
+		&t.CacheCreationTokens, &t.CacheReadTokens, &t.Cost, &unknownCount); err != nil {
+		return Totals{}, fmt.Errorf("failed to aggregate totals: %w", err)
+	}
+	t.PromptTokens = t.InputTokens + t.CacheCreationTokens
+	t.CompletionTokens = t.OutputTokens + t.CacheReadTokens
+	t.CostUnknown = unknownCount > 0
+	return t, nil
+}
+
+const callColumns = `model_call_id, project_id, task_id, turn_id, session_id, message_id,
+    provider, model, status, retry_group, price_catalog_version, cost_state,
+    started_at, finished_at, first_token_at, latency_ms, ttft_ms,
+    input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+    estimated_cost, error_code`
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCall(row scanner) (ModelCall, error) {
+	var c ModelCall
+	var projectID, taskID, turnID, sessionID, messageID, retryGroup sql.NullString
+	var finishedAt, firstTokenAt sql.NullInt64
+	var status, costState string
+	if err := row.Scan(
+		&c.ID, &projectID, &taskID, &turnID, &sessionID, &messageID,
+		&c.Provider, &c.Model, &status, &retryGroup, &c.PriceCatalogVersion, &costState,
+		&c.StartedAt, &finishedAt, &firstTokenAt, &c.LatencyMS, &c.TTFTMS,
+		&c.InputTokens, &c.OutputTokens, &c.CacheCreationTokens, &c.CacheReadTokens,
+		&c.EstimatedCost, &c.ErrorCode,
+	); err != nil {
+		return ModelCall{}, err
+	}
+	c.ProjectID = projectID.String
+	c.TaskID = taskID.String
+	c.TurnID = turnID.String
+	c.SessionID = sessionID.String
+	c.MessageID = messageID.String
+	c.RetryGroup = retryGroup.String
+	c.Status = CallStatus(status)
+	c.CostState = CostState(costState)
+	c.FinishedAt = finishedAt.Int64
+	c.FirstTokenAt = firstTokenAt.Int64
+	return c, nil
+}
+
+func nullOrInt(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/config"
+	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/dashboard"
 	"github.com/aux-ai/aux-cli/internal/db"
 	"github.com/aux-ai/aux-cli/internal/format"
@@ -28,6 +29,7 @@ type App struct {
 	Messages    message.Service
 	History     history.Service
 	Permissions permission.Service
+	Cost        cost.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -46,12 +48,15 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	sessions := session.NewService(q)
 	messages := message.NewService(q)
 	files := history.NewService(q, conn)
+	// The ledger runs raw SQL directly against the connection (see ADR 0003).
+	ledger := cost.NewService(conn)
 
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
 		History:     files,
 		Permissions: permission.NewPermissionService(),
+		Cost:        ledger,
 		LSPClients:  make(map[string]*lsp.Client),
 	}
 
@@ -68,10 +73,12 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		config.AgentCoder,
 		app.Sessions,
 		app.Messages,
+		app.Cost,
 		agent.CoderAgentTools(
 			app.Permissions,
 			app.Sessions,
 			app.Messages,
+			app.Cost,
 			app.History,
 			app.LSPClients,
 		),

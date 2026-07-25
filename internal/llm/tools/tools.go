@@ -15,16 +15,24 @@ type ToolInfo struct {
 type toolResponseType string
 
 type (
-	sessionIDContextKey string
-	messageIDContextKey string
+	sessionIDContextKey   string
+	messageIDContextKey   string
+	turnIDContextKey      string
+	modelCallIDContextKey string
+	taskIDContextKey      string
+	projectIDContextKey   string
 )
 
 const (
 	ToolResponseTypeText  toolResponseType = "text"
 	ToolResponseTypeImage toolResponseType = "image"
 
-	SessionIDContextKey sessionIDContextKey = "session_id"
-	MessageIDContextKey messageIDContextKey = "message_id"
+	SessionIDContextKey   sessionIDContextKey   = "session_id"
+	MessageIDContextKey   messageIDContextKey   = "message_id"
+	TurnIDContextKey      turnIDContextKey      = "turn_id"
+	ModelCallIDContextKey modelCallIDContextKey = "model_call_id"
+	TaskIDContextKey      taskIDContextKey      = "task_id"
+	ProjectIDContextKey   projectIDContextKey   = "project_id"
 )
 
 type ToolResponse struct {
@@ -81,4 +89,36 @@ func GetContextValues(ctx context.Context) (string, string) {
 		return sessionID.(string), ""
 	}
 	return sessionID.(string), messageID.(string)
+}
+
+// Correlation carries the runtime identifiers that link a tool execution back to
+// its session, message, turn, model call, task, and project. It replaces
+// reaching into many individual context keys (roadmapplan.md §5.4).
+type Correlation struct {
+	SessionID   string
+	MessageID   string
+	TurnID      string
+	ModelCallID string
+	TaskID      string
+	ProjectID   string
+}
+
+func ctxString(ctx context.Context, key any) string {
+	if v, ok := ctx.Value(key).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// CorrelationFromContext extracts the runtime correlation identifiers from ctx.
+// Missing values are returned as empty strings.
+func CorrelationFromContext(ctx context.Context) Correlation {
+	return Correlation{
+		SessionID:   ctxString(ctx, SessionIDContextKey),
+		MessageID:   ctxString(ctx, MessageIDContextKey),
+		TurnID:      ctxString(ctx, TurnIDContextKey),
+		ModelCallID: ctxString(ctx, ModelCallIDContextKey),
+		TaskID:      ctxString(ctx, TaskIDContextKey),
+		ProjectID:   ctxString(ctx, ProjectIDContextKey),
+	}
 }
