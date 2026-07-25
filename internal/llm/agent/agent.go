@@ -21,8 +21,12 @@ import (
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
+	"github.com/aux-ai/aux-cli/internal/runtime"
 	"github.com/aux-ai/aux-cli/internal/session"
 )
+
+// agent implements the runtime.Runner turn seam.
+var _ runtime.Runner = (*agent)(nil)
 
 // Common errors
 var (
@@ -295,7 +299,8 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 		default:
 			// Continue processing
 		}
-		agentMessage, toolResults, err := a.streamAndHandleEvents(ctx, sessionID, msgHistory)
+		turn, err := a.RunTurn(ctx, sessionID, msgHistory)
+		agentMessage, toolResults := turn.Assistant, turn.ToolResults
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				agentMessage.AddFinish(message.FinishReasonCanceled)
@@ -331,6 +336,14 @@ func (a *agent) createUserMessage(ctx context.Context, sessionID, content string
 		Role:  message.User,
 		Parts: parts,
 	})
+}
+
+// RunTurn executes one turn (one model call plus its tool results) behind the
+// runtime.Runner seam. In compatibility mode it passes the stored history to the
+// provider unchanged; later phases substitute the prompt compiler here.
+func (a *agent) RunTurn(ctx context.Context, sessionID string, history []message.Message) (runtime.TurnResult, error) {
+	assistant, toolResults, err := a.streamAndHandleEvents(ctx, sessionID, history)
+	return runtime.TurnResult{Assistant: assistant, ToolResults: toolResults}, err
 }
 
 func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msgHistory []message.Message) (message.Message, *message.Message, error) {
