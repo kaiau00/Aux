@@ -3,23 +3,15 @@ package agent
 import (
 	"context"
 
-	"github.com/aux-ai/aux-cli/internal/cost"
-	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/lsp"
-	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/permission"
-	"github.com/aux-ai/aux-cli/internal/session"
 )
 
 func CoderAgentTools(
+	deps Deps,
 	permissions permission.Service,
-	sessions session.Service,
-	messages message.Service,
-	ledger cost.Service,
-	events eventstore.Service,
-	recorder tools.Recorder,
 	history history.Service,
 	lspClients map[string]*lsp.Client,
 ) []tools.BaseTool {
@@ -40,7 +32,7 @@ func CoderAgentTools(
 			tools.NewViewTool(lspClients),
 			tools.NewPatchTool(lspClients, permissions, history),
 			tools.NewWriteTool(lspClients, permissions, history),
-			NewAgentTool(sessions, messages, ledger, events, recorder, lspClients),
+			NewAgentTool(deps, lspClients),
 		}, otherTools...,
 	)
 }

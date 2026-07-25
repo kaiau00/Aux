@@ -28,6 +28,16 @@ type TurnPayload struct {
 	FinishReason string `json:"finishReason,omitempty"`
 }
 
+// TaskPayload accompanies task.* events.
+type TaskPayload struct {
+	TaskID           string `json:"taskId"`
+	Objective        string `json:"objective,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	Status           string `json:"status,omitempty"`
+	Outcome          string `json:"outcome,omitempty"`
+	ProfileVersionID string `json:"profileVersionId,omitempty"`
+}
+
 // ToolPayload accompanies tool.* events.
 type ToolPayload struct {
 	ToolExecutionID string `json:"toolExecutionId"`

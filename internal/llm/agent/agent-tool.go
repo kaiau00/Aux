@@ -6,20 +6,13 @@ import (
 	"fmt"
 
 	"github.com/aux-ai/aux-cli/internal/config"
-	"github.com/aux-ai/aux-cli/internal/cost"
-	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/lsp"
 	"github.com/aux-ai/aux-cli/internal/message"
-	"github.com/aux-ai/aux-cli/internal/session"
 )
 
 type agentTool struct {
-	sessions   session.Service
-	messages   message.Service
-	ledger     cost.Service
-	events     eventstore.Service
-	recorder   tools.Recorder
+	deps       Deps
 	lspClients map[string]*lsp.Client
 }
 
@@ -59,12 +52,16 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 		return tools.ToolResponse{}, fmt.Errorf("session_id and message_id are required")
 	}
 
-	agent, err := NewAgent(config.AgentTask, b.sessions, b.messages, b.ledger, b.events, b.recorder, TaskAgentTools(b.lspClients))
+	// Subagents run without the task coordinator: they execute a sub-objective of
+	// the parent task rather than opening a new top-level task.
+	subDeps := b.deps
+	subDeps.Coordinator = nil
+	agent, err := NewAgent(config.AgentTask, subDeps, TaskAgentTools(b.lspClients))
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error creating agent: %s", err)
 	}
 
-	session, err := b.sessions.CreateTaskSession(ctx, call.ID, sessionID, "New Agent Session")
+	session, err := b.deps.Sessions.CreateTaskSession(ctx, call.ID, sessionID, "New Agent Session")
 	if err != nil {
 		return tools.ToolResponse{}, fmt.Errorf("error creating session: %s", err)
 	}
@@ -90,20 +87,9 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 	return tools.NewTextResponse(response.Content().String()), nil
 }
 
-func NewAgentTool(
-	Sessions session.Service,
-	Messages message.Service,
-	Ledger cost.Service,
-	Events eventstore.Service,
-	Recorder tools.Recorder,
-	LspClients map[string]*lsp.Client,
-) tools.BaseTool {
+func NewAgentTool(deps Deps, lspClients map[string]*lsp.Client) tools.BaseTool {
 	return &agentTool{
-		sessions:   Sessions,
-		messages:   Messages,
-		ledger:     Ledger,
-		events:     Events,
-		recorder:   Recorder,
-		lspClients: LspClients,
+		deps:       deps,
+		lspClients: lspClients,
 	}
 }

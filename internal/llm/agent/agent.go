@@ -64,13 +64,33 @@ type Service interface {
 	Summarize(ctx context.Context, sessionID string) error
 }
 
+// TaskCoordinator turns a user objective into a first-class task before tool use
+// and finalizes it afterward. It is optional (only the top-level agent uses it).
+type TaskCoordinator interface {
+	Begin(ctx context.Context, sessionID, objective string) (context.Context, string, error)
+	Finish(ctx context.Context, taskID, outcome string)
+	Fail(ctx context.Context, taskID string, cause error)
+}
+
+// Deps groups the runtime services an agent needs, so wiring stays readable as
+// more services are added (roadmapplan.md §3.2).
+type Deps struct {
+	Sessions    session.Service
+	Messages    message.Service
+	Ledger      cost.Service
+	Events      eventstore.Service
+	Recorder    tools.Recorder
+	Coordinator TaskCoordinator // optional; top-level agent only
+}
+
 type agent struct {
 	*pubsub.Broker[AgentEvent]
-	sessions session.Service
-	messages message.Service
-	ledger   cost.Service
-	events   eventstore.Service
-	executor *tools.Executor
+	sessions    session.Service
+	messages    message.Service
+	ledger      cost.Service
+	events      eventstore.Service
+	coordinator TaskCoordinator
+	executor    *tools.Executor
 
 	tools    []tools.BaseTool
 	provider provider.Provider
@@ -83,11 +103,7 @@ type agent struct {
 
 func NewAgent(
 	agentName config.AgentName,
-	sessions session.Service,
-	messages message.Service,
-	ledger cost.Service,
-	events eventstore.Service,
-	recorder tools.Recorder,
+	deps Deps,
 	agentTools []tools.BaseTool,
 ) (Service, error) {
 	agentProvider, err := createAgentProvider(agentName)
@@ -113,11 +129,12 @@ func NewAgent(
 	agent := &agent{
 		Broker:            pubsub.NewBroker[AgentEvent](),
 		provider:          agentProvider,
-		messages:          messages,
-		sessions:          sessions,
-		ledger:            ledger,
-		events:            events,
-		executor:          tools.NewExecutor(recorder),
+		messages:          deps.Messages,
+		sessions:          deps.Sessions,
+		ledger:            deps.Ledger,
+		events:            deps.Events,
+		coordinator:       deps.Coordinator,
+		executor:          tools.NewExecutor(deps.Recorder),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
 		summarizeProvider: summarizeProvider,
@@ -247,8 +264,29 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 	return events, nil
 }
 
-func (a *agent) processGeneration(ctx context.Context, sessionID, content string, attachmentParts []message.ContentPart) AgentEvent {
+func (a *agent) processGeneration(ctx context.Context, sessionID, content string, attachmentParts []message.ContentPart) (result AgentEvent) {
 	cfg := config.Get()
+
+	// Turn this user objective into a first-class, versioned task bound to the
+	// current project revision and effective profile, before any tool runs. The
+	// task is finalized (completed/failed/cancelled) when generation returns.
+	var taskID string
+	if a.coordinator != nil {
+		if taskCtx, id, err := a.coordinator.Begin(ctx, sessionID, content); err != nil {
+			logging.Warn("failed to begin task", "error", err)
+		} else {
+			ctx = taskCtx
+			taskID = id
+			defer func() {
+				if result.Error != nil {
+					a.coordinator.Fail(ctx, taskID, result.Error)
+				} else {
+					a.coordinator.Finish(ctx, taskID, "completed")
+				}
+			}()
+		}
+	}
+
 	// List existing messages; if none, start title generation asynchronously.
 	msgs, err := a.messages.List(ctx, sessionID)
 	if err != nil {

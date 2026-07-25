@@ -25,6 +25,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/session"
+	"github.com/aux-ai/aux-cli/internal/task"
 	"github.com/aux-ai/aux-cli/internal/toolexec"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 )
@@ -39,6 +40,8 @@ type App struct {
 	ToolRecorder tools.Recorder
 	Projects     *project.Service
 	Profiles     *profile.Service
+	Tasks        *task.Store
+	TaskCoord    *task.Coordinator
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -66,6 +69,8 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	toolRecorder := toolexec.NewRecorder(toolexec.NewStore(conn), events)
 	projects := project.NewService(project.NewStore(conn), project.GitVCS{})
 	profiles := profile.NewService(profile.NewStore(conn), profile.NewBuilder(profile.NewStore(conn), profile.DefaultScanners()))
+	taskStore := task.NewStore(conn)
+	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory())
 
 	app := &App{
 		Sessions:     sessions,
@@ -77,6 +82,8 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		ToolRecorder: toolRecorder,
 		Projects:     projects,
 		Profiles:     profiles,
+		Tasks:        taskStore,
+		TaskCoord:    taskCoord,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 
@@ -94,20 +101,20 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	agent.GetMcpTools(ctx, app.Permissions)
 
 	var err error
+	coderDeps := agent.Deps{
+		Sessions:    app.Sessions,
+		Messages:    app.Messages,
+		Ledger:      app.Cost,
+		Events:      app.Events,
+		Recorder:    app.ToolRecorder,
+		Coordinator: app.TaskCoord,
+	}
 	app.CoderAgent, err = agent.NewAgent(
 		config.AgentCoder,
-		app.Sessions,
-		app.Messages,
-		app.Cost,
-		app.Events,
-		app.ToolRecorder,
+		coderDeps,
 		agent.CoderAgentTools(
+			coderDeps,
 			app.Permissions,
-			app.Sessions,
-			app.Messages,
-			app.Cost,
-			app.Events,
-			app.ToolRecorder,
 			app.History,
 			app.LSPClients,
 		),

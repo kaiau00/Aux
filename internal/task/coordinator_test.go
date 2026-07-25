@@ -1,0 +1,150 @@
+package task_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/aux-ai/aux-cli/internal/db/dbtest"
+	"github.com/aux-ai/aux-cli/internal/eventstore"
+	"github.com/aux-ai/aux-cli/internal/llm/tools"
+	"github.com/aux-ai/aux-cli/internal/profile"
+	"github.com/aux-ai/aux-cli/internal/project"
+	"github.com/aux-ai/aux-cli/internal/task"
+)
+
+type fakeResolver struct{ res project.Resolution }
+
+func (f fakeResolver) Resolve(context.Context, string) (project.Resolution, error) { return f.res, nil }
+
+type fakeProfiles struct{ eff profile.Effective }
+
+func (f fakeProfiles) CompileEffective(context.Context, string, string, string, string, string) (profile.Effective, error) {
+	return f.eff, nil
+}
+
+func newCoordinator(t *testing.T) (*task.Coordinator, *task.Store, eventstore.Service) {
+	t.Helper()
+	conn := dbtest.New(t)
+	store := task.NewStore(conn)
+	events := eventstore.NewService(conn)
+	res := project.Resolution{
+		Project:  project.Project{ID: "proj-1", CanonicalName: "widget"},
+		Root:     project.Root{CanonicalPath: "/tmp/widget"},
+		Revision: project.Revision{ID: "rev-1", VCSRevision: "abc"},
+	}
+	eff := profile.Effective{VersionSetHash: "vset-1", Entries: []profile.EffectiveEntry{
+		{Type: profile.EntryValidationCommand, Key: "go.test", ValueJSON: `{"command":"go test ./..."}`},
+	}}
+	coord := task.NewCoordinator(fakeResolver{res}, fakeProfiles{eff}, store, events, "/tmp/widget")
+	return coord, store, events
+}
+
+func TestBeginCreatesTaskAndSpec(t *testing.T) {
+	coord, store, events := newCoordinator(t)
+	ctx := context.WithValue(context.Background(), tools.SessionIDContextKey, "sess-1")
+
+	newCtx, taskID, err := coord.Begin(ctx, "sess-1", "Fix the failing test")
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if taskID == "" {
+		t.Fatalf("expected a task id")
+	}
+
+	// Context carries task and project ids for correlation.
+	corr := tools.CorrelationFromContext(newCtx)
+	if corr.TaskID != taskID || corr.ProjectID != "proj-1" {
+		t.Fatalf("context correlation wrong: %+v", corr)
+	}
+
+	tk, err := store.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if tk.Mode != task.ModeBugDiagnosis {
+		t.Fatalf("mode = %q, want bug_diagnosis", tk.Mode)
+	}
+	if tk.Status != task.StatusRunning {
+		t.Fatalf("status = %q, want running", tk.Status)
+	}
+	if tk.ProfileVersionSet != "vset-1" || tk.ProjectRevisionID != "rev-1" {
+		t.Fatalf("profile/revision binding wrong: %+v", tk)
+	}
+
+	spec, ok, err := store.LatestSpec(ctx, taskID)
+	if err != nil || !ok {
+		t.Fatalf("expected spec, ok=%v err=%v", ok, err)
+	}
+	if spec.ProfileVersionID != "vset-1" || len(spec.ValidationIntents) != 1 {
+		t.Fatalf("spec not compiled from profile: %+v", spec)
+	}
+
+	// Lifecycle events emitted.
+	evs, _ := events.List(ctx, eventstore.Filter{TaskID: taskID})
+	types := map[eventstore.Type]bool{}
+	for _, e := range evs {
+		types[e.Type] = true
+	}
+	for _, want := range []eventstore.Type{eventstore.TaskCreated, eventstore.TaskCompiled, eventstore.TaskStarted} {
+		if !types[want] {
+			t.Fatalf("missing event %q; got %v", want, types)
+		}
+	}
+}
+
+func TestFinishAndFail(t *testing.T) {
+	coord, store, events := newCoordinator(t)
+	ctx := context.WithValue(context.Background(), tools.SessionIDContextKey, "sess-1")
+
+	_, taskID, err := coord.Begin(ctx, "sess-1", "add a feature")
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	coord.Finish(ctx, taskID, "done")
+	tk, _ := store.GetTask(ctx, taskID)
+	if tk.Status != task.StatusCompleted {
+		t.Fatalf("status = %q, want completed", tk.Status)
+	}
+
+	// A second task that gets cancelled.
+	_, taskID2, _ := coord.Begin(ctx, "sess-1", "another feature")
+	coord.Fail(ctx, taskID2, context.Canceled)
+	tk2, _ := store.GetTask(ctx, taskID2)
+	if tk2.Status != task.StatusCancelled {
+		t.Fatalf("status = %q, want cancelled", tk2.Status)
+	}
+
+	// A failed (non-cancel) task.
+	_, taskID3, _ := coord.Begin(ctx, "sess-1", "risky feature")
+	coord.Fail(ctx, taskID3, errors.New("boom"))
+	tk3, _ := store.GetTask(ctx, taskID3)
+	if tk3.Status != task.StatusFailed {
+		t.Fatalf("status = %q, want failed", tk3.Status)
+	}
+
+	completed, _ := events.List(ctx, eventstore.Filter{Types: []eventstore.Type{eventstore.TaskCompleted}})
+	if len(completed) != 1 {
+		t.Fatalf("expected 1 task.completed event, got %d", len(completed))
+	}
+}
+
+func TestStoreStatusAndListBySession(t *testing.T) {
+	store := task.NewStore(dbtest.New(t))
+	ctx := context.Background()
+	tk := task.Task{ID: "t1", SessionID: "s1", Objective: "obj", Mode: task.ModeImplementation, Status: task.StatusCreated, CreatedAt: 1}
+	if err := store.CreateTask(ctx, tk); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.SetStatus(ctx, "t1", task.StatusCompleted, "ok", 5, 10); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	got, _ := store.GetTask(ctx, "t1")
+	if got.Status != task.StatusCompleted || got.Outcome != "ok" || got.FinishedAt != 10 {
+		t.Fatalf("status not updated: %+v", got)
+	}
+	list, _ := store.ListBySession(ctx, "s1")
+	if len(list) != 1 {
+		t.Fatalf("expected 1 task for session, got %d", len(list))
+	}
+}
