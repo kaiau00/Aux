@@ -50,6 +50,15 @@ type TaskPayload struct {
 	ProfileVersionID string `json:"profileVersionId,omitempty"`
 }
 
+// ValidationPayload accompanies validation.* events.
+type ValidationPayload struct {
+	ValidationRunID string `json:"validationRunId"`
+	Command         string `json:"command,omitempty"`
+	Status          string `json:"status,omitempty"`
+	ExitCode        int    `json:"exitCode,omitempty"`
+	DurationMS      int64  `json:"durationMs,omitempty"`
+}
+
 // MemoryPayload accompanies memory.* events.
 type MemoryPayload struct {
 	MemoryID   string  `json:"memoryId"`

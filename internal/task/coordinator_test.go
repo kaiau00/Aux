@@ -8,10 +8,67 @@ import (
 	"github.com/aux-ai/aux-cli/internal/db/dbtest"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
+	"github.com/aux-ai/aux-cli/internal/memory"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/task"
+	"github.com/aux-ai/aux-cli/internal/validation"
 )
+
+type passingRunner struct{}
+
+func (passingRunner) Run(context.Context, string) (validation.CommandResult, error) {
+	return validation.CommandResult{ExitCode: 0}, nil
+}
+
+func TestFinishLearnsProceduralMemoryFromValidatedCommands(t *testing.T) {
+	conn := dbtest.New(t)
+	ctx := context.WithValue(context.Background(), tools.SessionIDContextKey, "sess-1")
+
+	store := task.NewStore(conn)
+	events := eventstore.NewService(conn)
+	memStore := memory.NewStore(conn)
+	memSvc := memory.NewService(memStore, events)
+	valSvc := validation.NewService(validation.NewStore(conn), events)
+
+	res := project.Resolution{
+		Project:  project.Project{ID: "proj-1"},
+		Root:     project.Root{CanonicalPath: "/tmp/p"},
+		Revision: project.Revision{ID: "rev-1", VCSRevision: "abc"},
+	}
+	eff := profile.Effective{VersionSetHash: "vset-1"}
+	coord := task.NewCoordinator(fakeResolver{res}, fakeProfiles{eff}, store, events, "/tmp/p").
+		WithMemory(memSvc).WithValidation(valSvc)
+
+	newCtx, taskID, err := coord.Begin(ctx, "sess-1", "add a feature")
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+
+	// A command validates successfully during the task.
+	if _, err := valSvc.RunIntent(newCtx, taskID,
+		validation.Intent{ID: "i1", Command: "go test ./...", CriterionIDs: []string{"c1"}},
+		"fp-1", passingRunner{}); err != nil {
+		t.Fatalf("RunIntent: %v", err)
+	}
+
+	coord.Finish(newCtx, taskID, "completed")
+
+	// The validated command becomes an active procedural memory (§8.2/§8.3).
+	active, err := memSvc.Retrieve(ctx, "proj-1", []memory.Type{memory.Procedural}, 10)
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	found := false
+	for _, m := range active {
+		if m.StableKey == "validate:go test ./..." {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected active procedural memory for the validated command, got %+v", active)
+	}
+}
 
 type fakeResolver struct{ res project.Resolution }
 

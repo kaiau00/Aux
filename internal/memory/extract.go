@@ -56,7 +56,10 @@ func Extract(in ExtractInput) []Candidate {
 				"command": cmd,
 				"purpose": "validated successfully during a task",
 			},
-			Confidence:                 0.7,
+			// A command that passed validation is one successful validated use,
+			// which the promotion policy (§8.3) treats as sufficient for a
+			// procedure — so it meets the auto-promote threshold.
+			Confidence:                 0.85,
 			SupportingRevision:         in.SupportingRevision,
 			Sources:                    []Source{{Type: "task", ID: in.TaskID, Relation: "validated"}},
 			InvalidateOnRevisionChange: true,

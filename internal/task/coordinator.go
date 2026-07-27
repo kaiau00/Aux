@@ -15,6 +15,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
+	"github.com/aux-ai/aux-cli/internal/validation"
 )
 
 // ProjectResolver resolves a working directory to a project identity.
@@ -36,12 +37,13 @@ type EventSink interface {
 // bound to the current project revision and effective profile, before any tool
 // runs (roadmapplan.md §3.5, §6.5). It caches project resolution per session.
 type Coordinator struct {
-	resolver ProjectResolver
-	profiles ProfileCompiler
-	store    *Store
-	events   EventSink
-	memories *memory.Service
-	workdir  string
+	resolver    ProjectResolver
+	profiles    ProfileCompiler
+	store       *Store
+	events      EventSink
+	memories    *memory.Service
+	validations *validation.Service
+	workdir     string
 
 	mu     sync.Mutex
 	cached *project.Resolution
@@ -56,6 +58,13 @@ func NewCoordinator(resolver ProjectResolver, profiles ProfileCompiler, store *S
 // memory candidates and active memories surface as available context. Optional.
 func (c *Coordinator) WithMemory(m *memory.Service) *Coordinator {
 	c.memories = m
+	return c
+}
+
+// WithValidation attaches a validation service so procedural memory can be
+// extracted from commands that validated successfully during a task. Optional.
+func (c *Coordinator) WithValidation(v *validation.Service) *Coordinator {
+	c.validations = v
 	return c
 }
 
@@ -180,6 +189,11 @@ func (c *Coordinator) learnFromTask(ctx context.Context, taskID, outcome string)
 	if c.cached != nil {
 		rev = c.cached.Revision.VCSRevision
 	}
+	// Commands that validated successfully become procedural-memory candidates.
+	var successfulCommands []string
+	if c.validations != nil {
+		successfulCommands, _ = c.validations.SuccessfulCommands(ctx, t.ID)
+	}
 	_ = c.memories.Learn(ctx, memory.Extract(memory.ExtractInput{
 		ProjectID:          t.ProjectID,
 		TaskID:             t.ID,
@@ -187,6 +201,7 @@ func (c *Coordinator) learnFromTask(ctx context.Context, taskID, outcome string)
 		Mode:               string(t.Mode),
 		Outcome:            outcome,
 		SupportingRevision: rev,
+		SuccessfulCommands: successfulCommands,
 	}))
 }
 

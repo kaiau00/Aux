@@ -34,6 +34,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/task"
 	"github.com/aux-ai/aux-cli/internal/toolexec"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/aux-ai/aux-cli/internal/validation"
 )
 
 type App struct {
@@ -52,6 +53,7 @@ type App struct {
 	Pages        *contextstore.Store
 	Memories     *memory.Service
 	Impact       *impact.Service
+	Validations  *validation.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -81,7 +83,9 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	profiles := profile.NewService(profile.NewStore(conn), profile.NewBuilder(profile.NewStore(conn), profile.DefaultScanners()))
 	taskStore := task.NewStore(conn)
 	memories := memory.NewService(memory.NewStore(conn), events)
-	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory()).WithMemory(memories)
+	validations := validation.NewService(validation.NewStore(conn), events)
+	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory()).
+		WithMemory(memories).WithValidation(validations)
 	// Content-addressed artifact store, with bytes under the app data directory.
 	artifacts := artifact.NewService(
 		artifact.NewFSBackend(filepath.Join(config.Get().Data.Directory, "artifacts")),
@@ -106,6 +110,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Pages:        pages,
 		Memories:     memories,
 		Impact:       impactSvc,
+		Validations:  validations,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 
