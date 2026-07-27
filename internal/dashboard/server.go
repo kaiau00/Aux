@@ -72,6 +72,7 @@ func Start(parent context.Context, services Services, options Options) (*Server,
 	mux.HandleFunc("/", server.handleIndex)
 	mux.HandleFunc("/api/snapshot", server.handleSnapshot)
 	mux.HandleFunc("/api/sessions/", server.handleSessionMessages)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", server.handleTaskView)
 	mux.HandleFunc("/events", server.handleEvents)
 	server.httpServer = &http.Server{
 		Handler:           mux,
@@ -129,6 +130,27 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+// handleTaskView serves a task's assembled, read-only view model (roadmapplan.md
+// §5.6, §18). It is read-only and token-gated like the rest of the dashboard.
+func (s *Server) handleTaskView(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Tasks == nil {
+		http.Error(w, "task read models unavailable", http.StatusNotFound)
+		return
+	}
+	id := r.PathValue("id")
+	view, err := s.services.Tasks.TaskView(r.Context(), id)
+	if err != nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(view)
 }
 
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/history"
@@ -9,7 +10,14 @@ import (
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/session"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
+
+// TaskReader assembles a task's read-only view model from durable runtime state
+// (roadmapplan.md §18). Optional; when nil the /api/v1 task endpoint is disabled.
+type TaskReader interface {
+	TaskView(ctx context.Context, taskID string) (viewmodel.TaskView, error)
+}
 
 type RedactionMode string
 
@@ -20,11 +28,12 @@ const (
 )
 
 type Options struct {
-	Enabled     bool
-	Host        string
-	Port        int
-	Redaction   RedactionMode
-	FullContent bool
+	Enabled       bool
+	Host          string
+	Port          int
+	Redaction     RedactionMode
+	FullContent   bool
+	DataDirectory string
 }
 
 type Services struct {
@@ -32,6 +41,7 @@ type Services struct {
 	Messages message.Service
 	History  history.Service
 	Agent    agent.Service
+	Tasks    TaskReader
 }
 
 type DashboardEvent struct {

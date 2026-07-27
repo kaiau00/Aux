@@ -37,6 +37,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/toolexec"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/validation"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
 
 type App struct {
@@ -180,6 +181,14 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Messages: app.Messages,
 		History:  app.History,
 		Agent:    app.CoderAgent,
+		Tasks: viewmodel.Stores{
+			Tasks:       app.Tasks,
+			Events:      app.Events,
+			Validations: app.Validations,
+			Checkpoints: checkpoint.NewStore(conn),
+			Pages:       app.Pages,
+			Ledger:      app.Cost,
+		},
 	}, dashboardOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start dashboard: %w", err)
