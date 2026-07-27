@@ -12,14 +12,30 @@ import (
 // emitting tool.* domain events. Failures are logged, never propagated, so tool
 // behaviour is never affected by observability.
 type recorder struct {
-	store  *Store
-	events eventstore.Service
+	store    *Store
+	events   eventstore.Service
+	observer func(ctx context.Context, rec tools.ExecutionRecord)
+}
+
+// Option configures a recorder.
+type Option func(*recorder)
+
+// WithObserver registers a best-effort callback invoked after each tool finishes
+// (e.g. first-mutation checkpointing, roadmapplan.md §11.1). It runs on a
+// detached context and its result is ignored so observability never affects tool
+// behaviour.
+func WithObserver(fn func(ctx context.Context, rec tools.ExecutionRecord)) Option {
+	return func(r *recorder) { r.observer = fn }
 }
 
 // NewRecorder returns a tools.Recorder that writes to the store and (if non-nil)
 // emits tool lifecycle events.
-func NewRecorder(store *Store, events eventstore.Service) tools.Recorder {
-	return &recorder{store: store, events: events}
+func NewRecorder(store *Store, events eventstore.Service, opts ...Option) tools.Recorder {
+	r := &recorder{store: store, events: events}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *recorder) Start(ctx context.Context, rec tools.ExecutionRecord) {
@@ -43,6 +59,9 @@ func (r *recorder) Finish(ctx context.Context, rec tools.ExecutionRecord) {
 		evType = eventstore.ToolFailed
 	}
 	r.emit(evType, rec)
+	if r.observer != nil {
+		r.observer(context.Background(), rec)
+	}
 }
 
 func (r *recorder) emit(evType eventstore.Type, rec tools.ExecutionRecord) {

@@ -29,6 +29,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/lsp"
 	"github.com/aux-ai/aux-cli/internal/memory"
 	"github.com/aux-ai/aux-cli/internal/message"
+	"github.com/aux-ai/aux-cli/internal/mutationcp"
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
@@ -86,9 +87,6 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	// (see ADR 0003). The event store is the durable, ordered runtime log.
 	ledger := cost.NewService(conn)
 	events := eventstore.NewService(conn)
-	// The tool recorder persists tool_executions and emits tool.* events; the
-	// executor (built inside the agent) routes every tool call through it.
-	toolRecorder := toolexec.NewRecorder(toolexec.NewStore(conn), events)
 	projects := project.NewService(project.NewStore(conn), project.GitVCS{})
 	profiles := profile.NewService(profile.NewStore(conn), profile.NewBuilder(profile.NewStore(conn), profile.DefaultScanners()))
 	taskStore := task.NewStore(conn)
@@ -111,6 +109,15 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	// A completed task automatically checkpoints what it changed, using the file
 	// versions the edit/write tools already recorded (roadmapplan.md §11.1).
 	taskCoord.WithCheckpoints(files, checkpoints)
+
+	// The tool recorder persists tool_executions and emits tool.* events; the
+	// executor (built inside the agent) routes every tool call through it. Its
+	// observer captures a first-mutation baseline checkpoint (§11.1).
+	mutationCheckpointer := mutationcp.New(files, mutationcp.StoreAdapter{Store: checkpointStore, Service: checkpoints})
+	toolRecorder := toolexec.NewRecorder(toolexec.NewStore(conn), events,
+		toolexec.WithObserver(func(ctx context.Context, rec tools.ExecutionRecord) {
+			_ = mutationCheckpointer.OnToolCompleted(ctx, rec.Correlation.TaskID, rec.Correlation.SessionID, rec.ToolName)
+		}))
 
 	app := &App{
 		Sessions:        sessions,

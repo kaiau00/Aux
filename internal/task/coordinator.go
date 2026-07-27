@@ -230,33 +230,7 @@ func (c *Coordinator) captureCheckpoint(ctx context.Context, taskID, sessionID s
 		return
 	}
 
-	// "before" is the initial recorded content per path (what the edit/write
-	// tool saw first); "after" is the latest content. Both come from history,
-	// so the change set is truthful regardless of version-timestamp ties.
-	before := make(map[string]string, len(all))
-	for _, f := range all {
-		if f.Version == history.InitialVersion {
-			before[f.Path] = f.Content
-		}
-	}
-
-	var changes []checkpoint.FileChange
-	for _, f := range latest {
-		b := before[f.Path]
-		if b == f.Content {
-			continue // recorded but net-unchanged
-		}
-		op := checkpoint.OpModify
-		switch {
-		case b == "":
-			op = checkpoint.OpAdd
-		case f.Content == "":
-			op = checkpoint.OpDelete
-		}
-		changes = append(changes, checkpoint.FileChange{
-			Path: f.Path, Before: []byte(b), After: []byte(f.Content), Operation: op,
-		})
-	}
+	changes := checkpoint.ChangesFrom(initialContentByPath(all), toFileVersions(latest))
 	if len(changes) == 0 {
 		return
 	}
@@ -266,6 +240,27 @@ func (c *Coordinator) captureCheckpoint(ctx context.Context, taskID, sessionID s
 		rev = c.cached.Revision.VCSRevision
 	}
 	_, _ = c.checkpoints.Create(ctx, taskID, "", "task-complete", rev, changes)
+}
+
+// initialContentByPath maps each path to its earliest ("initial") recorded
+// content — the "before" snapshot for a change set.
+func initialContentByPath(all []history.File) map[string]string {
+	before := make(map[string]string, len(all))
+	for _, f := range all {
+		if f.Version == history.InitialVersion {
+			before[f.Path] = f.Content
+		}
+	}
+	return before
+}
+
+// toFileVersions adapts history files to the checkpoint change-set input.
+func toFileVersions(files []history.File) []checkpoint.FileVersion {
+	out := make([]checkpoint.FileVersion, 0, len(files))
+	for _, f := range files {
+		out = append(out, checkpoint.FileVersion{Path: f.Path, Content: f.Content})
+	}
+	return out
 }
 
 // learnFromTask extracts deterministic memory candidates from a completed task
