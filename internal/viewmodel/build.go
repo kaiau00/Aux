@@ -26,6 +26,19 @@ func StateForTaskStatus(status task.Status) ComponentState {
 	}
 }
 
+// BuildTaskSummary projects a task into a lightweight list item.
+func BuildTaskSummary(t task.Task) TaskSummaryVM {
+	return TaskSummaryVM{
+		TaskID:    t.ID,
+		Objective: t.Objective,
+		Mode:      string(t.Mode),
+		State:     StateForTaskStatus(t.Status),
+		Outcome:   t.Outcome,
+		SessionID: t.SessionID,
+		CreatedAt: t.CreatedAt,
+	}
+}
+
 // StageFromEvents returns the current activity stage from the most recent
 // activity-bearing event, so the header shows what Aux is doing now.
 func StageFromEvents(events []eventstore.Event) string {

@@ -31,6 +31,20 @@ type Stores struct {
 	Ledger      cost.Service
 }
 
+// RecentTasks returns lightweight summaries of the most recent tasks for the
+// dashboard's active-work navigation (roadmapplan.md §13.12).
+func (s Stores) RecentTasks(ctx context.Context, limit int) ([]TaskSummaryVM, error) {
+	tasks, err := s.Tasks.ListRecent(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TaskSummaryVM, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, BuildTaskSummary(t))
+	}
+	return out, nil
+}
+
 // TaskView assembles the full read model for a task from durable state.
 func (s Stores) TaskView(ctx context.Context, taskID string) (TaskView, error) {
 	t, err := s.Tasks.GetTask(ctx, taskID)

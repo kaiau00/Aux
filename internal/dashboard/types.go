@@ -13,10 +13,12 @@ import (
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
 
-// TaskReader assembles a task's read-only view model from durable runtime state
-// (roadmapplan.md §18). Optional; when nil the /api/v1 task endpoint is disabled.
+// TaskReader assembles task read-only view models from durable runtime state
+// (roadmapplan.md §18). Optional; when nil the /api/v1 task endpoints are
+// disabled.
 type TaskReader interface {
 	TaskView(ctx context.Context, taskID string) (viewmodel.TaskView, error)
+	RecentTasks(ctx context.Context, limit int) ([]viewmodel.TaskSummaryVM, error)
 }
 
 type RedactionMode string

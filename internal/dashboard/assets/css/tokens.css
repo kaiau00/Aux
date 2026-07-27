@@ -1,0 +1,20 @@
+/* Design tokens for the Aux dashboard (roadmapplan.md §13.13).
+   Split out of index.html as the first step of the asset structure so the
+   warm technical-workbench palette lives in one place. Loaded before the
+   inline component styles, which reference these custom properties. */
+:root {
+  color-scheme: dark;
+  --bg: #080704;
+  --panel: rgba(37, 28, 12, .78);
+  --panel-2: rgba(22, 18, 10, .86);
+  --line: rgba(245, 158, 11, .34);
+  --line-strong: rgba(251, 191, 36, .72);
+  --text: #fff7df;
+  --muted: #b89450;
+  --amber: #f59e0b;
+  --amber-2: #fbbf24;
+  --copper: #d97706;
+  --danger: #fb923c;
+  --ok: #facc15;
+  --shadow: 0 0 30px rgba(245, 158, 11, .16);
+}

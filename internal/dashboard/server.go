@@ -10,14 +10,17 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/logging"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
 
-//go:embed assets/*
+//go:embed all:assets
 var assets embed.FS
 
 type Server struct {
@@ -70,8 +73,11 @@ func Start(parent context.Context, services Services, options Options) (*Server,
 	server.url = fmt.Sprintf("http://%s/?token=%s", listener.Addr().String(), token)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", server.handleIndex)
+	mux.HandleFunc("GET /css/", server.handleStaticAsset)
+	mux.HandleFunc("GET /js/", server.handleStaticAsset)
 	mux.HandleFunc("/api/snapshot", server.handleSnapshot)
 	mux.HandleFunc("/api/sessions/", server.handleSessionMessages)
+	mux.HandleFunc("GET /api/v1/tasks", server.handleTasksList)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", server.handleTaskView)
 	mux.HandleFunc("/events", server.handleEvents)
 	server.httpServer = &http.Server{
@@ -130,6 +136,59 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+// handleStaticAsset serves the split css/js sub-resources (roadmapplan.md
+// §13.13) from the embedded asset tree. These carry no sensitive data — the
+// token protects the /api data endpoints — so they are not token-gated, since a
+// browser cannot attach the token to <link>/<script> sub-resource requests.
+func (s *Server) handleStaticAsset(w http.ResponseWriter, r *http.Request) {
+	clean := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	// Only css/ and js/ trees are served, and Clean removes any traversal.
+	if !strings.HasPrefix(clean, "css/") && !strings.HasPrefix(clean, "js/") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := assets.ReadFile("assets/" + clean)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	switch {
+	case strings.HasSuffix(clean, ".css"):
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(clean, ".js"):
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	}
+	_, _ = w.Write(data)
+}
+
+// handleTasksList serves recent task summaries for the dashboard's active-work
+// navigation (roadmapplan.md §13.12, §18). Read-only and token-gated.
+func (s *Server) handleTasksList(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Tasks == nil {
+		http.Error(w, "task read models unavailable", http.StatusNotFound)
+		return
+	}
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	tasks, err := s.services.Tasks.RecentTasks(r.Context(), limit)
+	if err != nil {
+		http.Error(w, "failed to list tasks", http.StatusInternalServerError)
+		return
+	}
+	if tasks == nil {
+		tasks = []viewmodel.TaskSummaryVM{}
+	}
+	writeJSON(w, tasks)
 }
 
 // handleTaskView serves a task's assembled, read-only view model (roadmapplan.md

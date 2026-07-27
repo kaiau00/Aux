@@ -17,6 +17,18 @@ type TaskHeaderVM struct {
 	CostUnknown  bool           `json:"costUnknown,omitempty"`
 }
 
+// TaskSummaryVM is a lightweight task list item for the dashboard's active-work
+// navigation (roadmapplan.md §13.12). It projects durable task state.
+type TaskSummaryVM struct {
+	TaskID    string         `json:"taskId"`
+	Objective string         `json:"objective"`
+	Mode      string         `json:"mode,omitempty"`
+	State     ComponentState `json:"state"`
+	Outcome   string         `json:"outcome,omitempty"`
+	SessionID string         `json:"sessionId,omitempty"`
+	CreatedAt int64          `json:"createdAt"`
+}
+
 // ActivityGroupVM is a collapsed activity stage (roadmapplan.md §13.7).
 type ActivityGroupVM struct {
 	Kind       ActivityKind   `json:"kind"`

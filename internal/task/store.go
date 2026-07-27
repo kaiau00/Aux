@@ -128,6 +128,29 @@ func (s *Store) ListBySession(ctx context.Context, sessionID string) ([]Task, er
 	return out, rows.Err()
 }
 
+// ListRecent returns the most recently created tasks across all sessions,
+// newest first, capped at limit (<=0 falls back to 20).
+func (s *Store) ListRecent(ctx context.Context, limit int) ([]Task, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+taskCols+` FROM tasks ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Task
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
 const taskCols = `task_id, project_id, session_id, project_revision_id, profile_version_set,
     objective, mode, status, outcome, created_at, started_at, finished_at`
 

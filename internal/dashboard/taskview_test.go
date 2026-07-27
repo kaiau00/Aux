@@ -72,3 +72,55 @@ func TestTaskViewRequiresToken(t *testing.T) {
 		t.Fatalf("expected 401 without token, got %d", rec.Code)
 	}
 }
+
+func TestTasksListEndpoint(t *testing.T) {
+	conn := dbtest.New(t)
+	ctx := context.Background()
+	taskStore := task.NewStore(conn)
+	// Two tasks; the newer one must sort first.
+	if err := taskStore.CreateTask(ctx, task.Task{
+		ID: "task-old", SessionID: "s", Objective: "older", Mode: task.ModeImplementation,
+		Status: task.StatusCompleted, CreatedAt: 100,
+	}); err != nil {
+		t.Fatalf("CreateTask old: %v", err)
+	}
+	if err := taskStore.CreateTask(ctx, task.Task{
+		ID: "task-new", SessionID: "s", Objective: "newer", Mode: task.ModeImplementation,
+		Status: task.StatusRunning, CreatedAt: 200,
+	}); err != nil {
+		t.Fatalf("CreateTask new: %v", err)
+	}
+
+	stores := viewmodel.Stores{Tasks: taskStore, Events: eventstore.NewService(conn), Ledger: cost.NewService(conn)}
+	server := &Server{token: "secret", services: Services{Tasks: stores}}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?token=secret", nil)
+	rec := httptest.NewRecorder()
+	server.handleTasksList(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var list []viewmodel.TaskSummaryVM
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(list))
+	}
+	if list[0].TaskID != "task-new" {
+		t.Fatalf("newest task should sort first, got %q", list[0].TaskID)
+	}
+	if list[0].State != viewmodel.StateActive {
+		t.Fatalf("running task summary should be active, got %q", list[0].State)
+	}
+}
+
+func TestTasksListRequiresToken(t *testing.T) {
+	server := &Server{token: "secret"}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	rec := httptest.NewRecorder()
+	server.handleTasksList(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d", rec.Code)
+	}
+}
