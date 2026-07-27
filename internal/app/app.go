@@ -31,6 +31,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 	"github.com/aux-ai/aux-cli/internal/session"
+	"github.com/aux-ai/aux-cli/internal/skill"
 	"github.com/aux-ai/aux-cli/internal/task"
 	"github.com/aux-ai/aux-cli/internal/toolexec"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
@@ -54,6 +55,7 @@ type App struct {
 	Memories     *memory.Service
 	Impact       *impact.Service
 	Validations  *validation.Service
+	Skills       *skill.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -93,6 +95,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	)
 	pages := contextstore.NewStore(conn)
 	impactSvc := impact.NewService(impact.NewStore(conn))
+	skills := skill.NewService(skill.NewStore(conn), events)
 
 	app := &App{
 		Sessions:     sessions,
@@ -111,6 +114,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Memories:     memories,
 		Impact:       impactSvc,
 		Validations:  validations,
+		Skills:       skills,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 

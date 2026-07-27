@@ -50,6 +50,14 @@ type TaskPayload struct {
 	ProfileVersionID string `json:"profileVersionId,omitempty"`
 }
 
+// SkillPayload accompanies skill.* events.
+type SkillPayload struct {
+	SkillID   string `json:"skillId"`
+	Name      string `json:"name,omitempty"`
+	State     string `json:"state,omitempty"`
+	VersionID string `json:"versionId,omitempty"`
+}
+
 // BudgetPayload accompanies budget.* and governor.decision events.
 type BudgetPayload struct {
 	Pressure  float64 `json:"pressure,omitempty"`
