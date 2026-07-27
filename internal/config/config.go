@@ -126,6 +126,7 @@ type Config struct {
 	SemanticRetrieval SemanticRetrievalConfig           `json:"semanticRetrieval,omitempty"`
 	Ponytail          PonytailConfig                    `json:"ponytail,omitempty"`
 	Context           ContextConfig                     `json:"context,omitempty"`
+	CostGovernor      CostGovernorConfig                `json:"costGovernor,omitempty"`
 }
 
 // ContextConfig controls Context OS behaviour (roadmapplan.md §15.1/§15.2). The
@@ -140,6 +141,12 @@ type ContextConfig struct {
 	// Paging selects the prompt compiler: "off" (compatibility) or "on" (demand
 	// paging: deduplicate repeated identical content). Default off.
 	Paging string `json:"paging,omitempty"`
+}
+
+// CostGovernorConfig controls the One-Key Cost Governor (roadmapplan.md §9, §15.2).
+type CostGovernorConfig struct {
+	// Mode is "off", "observe" (compute/warn only, no behavior change), or "on".
+	Mode string `json:"mode,omitempty"`
 }
 
 // Application constants
@@ -305,6 +312,7 @@ func setDefaults(debug bool) {
 	viper.SetDefault("context.virtualization", "off")
 	viper.SetDefault("context.artifactThresholdBytes", 0)
 	viper.SetDefault("context.paging", "off")
+	viper.SetDefault("costGovernor.mode", "off")
 
 	// Set default shell from environment or fallback to /bin/bash
 	shellPath := os.Getenv("SHELL")

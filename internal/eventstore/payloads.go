@@ -50,6 +50,14 @@ type TaskPayload struct {
 	ProfileVersionID string `json:"profileVersionId,omitempty"`
 }
 
+// BudgetPayload accompanies budget.* and governor.decision events.
+type BudgetPayload struct {
+	Pressure  float64 `json:"pressure,omitempty"`
+	Exhausted bool    `json:"exhausted,omitempty"`
+	Action    string  `json:"action,omitempty"`
+	Reason    string  `json:"reason,omitempty"`
+}
+
 // ValidationPayload accompanies validation.* events.
 type ValidationPayload struct {
 	ValidationRunID string `json:"validationRunId"`

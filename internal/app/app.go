@@ -139,15 +139,16 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		compiler = promptcompiler.NewPagingCompiler()
 	}
 	coderDeps := agent.Deps{
-		Sessions:    app.Sessions,
-		Messages:    app.Messages,
-		Ledger:      app.Cost,
-		Events:      app.Events,
-		Recorder:    app.ToolRecorder,
-		Coordinator: app.TaskCoord,
-		Virtualizer: virtualizer,
-		Pages:       app.Pages,
-		Compiler:    compiler,
+		Sessions:     app.Sessions,
+		Messages:     app.Messages,
+		Ledger:       app.Cost,
+		Events:       app.Events,
+		Recorder:     app.ToolRecorder,
+		Coordinator:  app.TaskCoord,
+		Virtualizer:  virtualizer,
+		Pages:        app.Pages,
+		Compiler:     compiler,
+		GovernorMode: cost.GovernorMode(config.Get().CostGovernor.Mode),
 	}
 	coderTools := append(
 		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients),

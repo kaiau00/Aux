@@ -77,15 +77,16 @@ type TaskCoordinator interface {
 // Deps groups the runtime services an agent needs, so wiring stays readable as
 // more services are added (roadmapplan.md §3.2).
 type Deps struct {
-	Sessions    session.Service
-	Messages    message.Service
-	Ledger      cost.Service
-	Events      eventstore.Service
-	Recorder    tools.Recorder
-	Coordinator TaskCoordinator         // optional; top-level agent only
-	Compiler    promptcompiler.Compiler // optional; defaults to compatibility mode
-	Virtualizer tools.Virtualizer       // optional; large tool-output virtualization
-	Pages       *contextstore.Store     // optional; records page bindings per call
+	Sessions     session.Service
+	Messages     message.Service
+	Ledger       cost.Service
+	Events       eventstore.Service
+	Recorder     tools.Recorder
+	Coordinator  TaskCoordinator         // optional; top-level agent only
+	Compiler     promptcompiler.Compiler // optional; defaults to compatibility mode
+	Virtualizer  tools.Virtualizer       // optional; large tool-output virtualization
+	Pages        *contextstore.Store     // optional; records page bindings per call
+	GovernorMode cost.GovernorMode       // optional; off/observe/on, default off
 }
 
 type agent struct {
@@ -97,6 +98,7 @@ type agent struct {
 	coordinator TaskCoordinator
 	compiler    promptcompiler.Compiler
 	pages       *contextstore.Store
+	governor    *cost.Governor
 	executor    *tools.Executor
 
 	tools    []tools.BaseTool
@@ -148,6 +150,7 @@ func NewAgent(
 		coordinator:       deps.Coordinator,
 		compiler:          compiler,
 		pages:             deps.Pages,
+		governor:          cost.NewGovernor(deps.GovernorMode),
 		executor:          tools.NewExecutor(deps.Recorder, deps.Virtualizer),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
@@ -557,6 +560,7 @@ out:
 			FinishReason: string(assistantMsg.FinishReason()),
 		},
 	})
+	a.assessBudget(ctx, sessionID)
 	if len(toolResults) == 0 {
 		return assistantMsg, nil, nil
 	}
@@ -882,6 +886,41 @@ func (a *agent) finalizeCallIfOpen(ctx context.Context, tracker *callTracker, se
 	}
 	if err := a.completeCall(ctx, tracker, sessionID, provider.TokenUsage{}); err != nil {
 		logging.Error("failed to close open model call", "error", err)
+	}
+}
+
+// assessBudget runs the Cost Governor in observe mode over the current task/
+// session totals and emits budget/governor events. It changes no prompt or
+// action (observe); enforcement ("on") is a separate, evaluated step. No-op when
+// the governor is off or no ledger is configured.
+func (a *agent) assessBudget(ctx context.Context, sessionID string) {
+	if a.governor == nil || a.governor.Mode() == cost.GovOff || a.ledger == nil {
+		return
+	}
+	corr := tools.CorrelationFromContext(ctx)
+	var totals cost.Totals
+	var err error
+	if corr.TaskID != "" {
+		totals, err = a.ledger.TaskTotals(ctx, corr.TaskID)
+	} else {
+		totals, err = a.ledger.SessionTotals(ctx, sessionID)
+	}
+	if err != nil {
+		return
+	}
+	budget := cost.DefaultBudget(cost.ModeBalanced)
+	usage := cost.Usage{InputTokens: totals.PromptTokens, OutputTokens: totals.CompletionTokens, Cost: totals.Cost}
+	assessment := a.governor.Assess(budget, usage, nil)
+	if !assessment.Enabled {
+		return
+	}
+	if assessment.Exhausted {
+		a.emit(ctx, eventstore.Append{Type: eventstore.BudgetExhausted, Payload: eventstore.BudgetPayload{Pressure: assessment.Pressure.Max, Exhausted: true}})
+	} else if assessment.Pressure.Max >= 0.8 {
+		a.emit(ctx, eventstore.Append{Type: eventstore.BudgetWarning, Payload: eventstore.BudgetPayload{Pressure: assessment.Pressure.Max}})
+	}
+	for _, d := range assessment.Decisions {
+		a.emit(ctx, eventstore.Append{Type: eventstore.GovernorDecision, Payload: eventstore.BudgetPayload{Action: d.Action, Reason: d.Reason}})
 	}
 }
 
