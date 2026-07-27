@@ -19,6 +19,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/format"
 	"github.com/aux-ai/aux-cli/internal/history"
+	"github.com/aux-ai/aux-cli/internal/impact"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/logging"
@@ -50,6 +51,7 @@ type App struct {
 	Artifacts    *artifact.Service
 	Pages        *contextstore.Store
 	Memories     *memory.Service
+	Impact       *impact.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -86,6 +88,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		artifact.NewStore(conn),
 	)
 	pages := contextstore.NewStore(conn)
+	impactSvc := impact.NewService(impact.NewStore(conn))
 
 	app := &App{
 		Sessions:     sessions,
@@ -102,6 +105,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Artifacts:    artifacts,
 		Pages:        pages,
 		Memories:     memories,
+		Impact:       impactSvc,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 
@@ -192,6 +196,14 @@ func (app *App) resolveProject(ctx context.Context) {
 		_ = app.Projects.Store().SetRevisionProfileInputHash(ctx, res.Revision.ID, fp)
 	}
 	logging.Debug("compiled effective profile", "entries", len(eff.Entries), "manifestTokens", eff.TokenEstimate)
+
+	// Build the change-impact graph (deterministic AST analysis). Best-effort;
+	// impact analysis broadens validation automatically when the graph is absent.
+	if n, gerr := app.Impact.Index(ctx, res.Project.ID, res.Root.CanonicalPath, res.Revision.VCSRevision); gerr != nil {
+		logging.Warn("failed to build impact graph", "error", gerr)
+	} else {
+		logging.Debug("built impact graph", "nodes", n)
+	}
 }
 
 // initTheme sets the application theme based on the configuration
