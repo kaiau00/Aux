@@ -1,0 +1,210 @@
+// Package visual holds deterministic, cross-component golden snapshots for the
+// Phase 2 TUI surfaces (roadmapplan.md §13.19). It renders the view-model
+// fixtures the plan enumerates — empty project, active edit, multiple changed
+// files, validation pass/failure, tool failure, context pressure, cost warning,
+// completed validated/unverified — at wide/medium/narrow widths, strips ANSI so
+// the snapshot captures layout/truncation/state rather than color, and asserts
+// content/state semantics in addition to the golden text. Browser screenshot
+// regression (the §13.19 browser section) is not runnable in this environment.
+package visual
+
+import (
+	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/aux-ai/aux-cli/internal/tui/components/activity"
+	"github.com/aux-ai/aux-cli/internal/tui/components/contextbudget"
+	"github.com/aux-ai/aux-cli/internal/tui/components/core"
+	"github.com/aux-ai/aux-cli/internal/tui/components/workbench"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
+)
+
+var update = flag.Bool("update", false, "update golden files")
+
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// plain strips ANSI styling and trailing whitespace so snapshots are stable
+// across themes and editors.
+func plain(s string) string {
+	lines := strings.Split(ansiRE.ReplaceAllString(s, ""), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// fixture is a deterministic composition of the Phase 2 view models.
+type fixture struct {
+	header     viewmodel.TaskHeaderVM
+	activity   []viewmodel.ActivityGroupVM
+	changes    viewmodel.ChangeSummaryVM
+	validation viewmodel.ValidationSummaryVM
+	budget     viewmodel.ContextBudgetVM
+}
+
+// render composes every present surface at the given width into one snapshot.
+func (f fixture) render(width int) string {
+	var b strings.Builder
+	b.WriteString(plain(core.RenderTaskHeader(f.header, width)))
+	if s := plain(activity.Render(f.activity, width)); s != "" {
+		b.WriteString("\n\n")
+		b.WriteString(s)
+	}
+	if s := plain(workbench.RenderChanges(f.changes, width)); s != "" {
+		b.WriteString("\n\n")
+		b.WriteString(s)
+	}
+	if s := plain(workbench.RenderValidation(f.validation, width)); s != "" {
+		b.WriteString("\n\n")
+		b.WriteString(s)
+	}
+	if s := plain(contextbudget.Render(f.budget, width)); s != "" {
+		b.WriteString("\n\n")
+		b.WriteString(s)
+	}
+	return b.String()
+}
+
+func fixtures() map[string]fixture {
+	return map[string]fixture{
+		"empty-project": {
+			header:     viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "idle", State: viewmodel.StateWaiting, Model: "Opus", ContextLimit: 64000},
+			validation: viewmodel.BuildValidationSummary(nil),
+		},
+		"active-edit": {
+			header: viewmodel.TaskHeaderVM{
+				Project: "aux-cli", Branch: "feat/x", Objective: "add the widget",
+				Stage: "editing", State: viewmodel.StateActive, Model: "Opus",
+				ContextUsed: 12000, ContextLimit: 64000, Cost: 0.08,
+			},
+			activity: []viewmodel.ActivityGroupVM{
+				{Kind: viewmodel.ActivitySearching, State: viewmodel.StateCompleted, Count: 3, DurationMS: 240},
+				{Kind: viewmodel.ActivityEditing, State: viewmodel.StateActive, Count: 2, DurationMS: 1200},
+			},
+			changes:    viewmodel.ChangeSummaryVM{Files: []viewmodel.ChangedFileVM{{Path: "widget.go", Operation: "modify"}}, Modified: 1},
+			validation: viewmodel.BuildValidationSummary([]viewmodel.CriterionInput{{Description: "tests pass"}}),
+		},
+		"multiple-changed-files": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "editing", State: viewmodel.StateActive, ContextLimit: 64000},
+			changes: viewmodel.ChangeSummaryVM{
+				Files: []viewmodel.ChangedFileVM{
+					{Path: "a.go", Operation: "add"},
+					{Path: "b.go", Operation: "modify"},
+					{Path: "c.go", Operation: "delete"},
+				},
+				Added: 1, Modified: 1, Deleted: 1,
+			},
+		},
+		"validation-pass": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "completed", State: viewmodel.StateCompleted, ContextLimit: 64000},
+			validation: viewmodel.ValidationSummaryVM{
+				Criteria: []viewmodel.CriterionVM{{Description: "tests pass", State: viewmodel.StateValidated}},
+				Overall:  viewmodel.StateValidated, Validated: 1,
+			},
+		},
+		"validation-failure": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "validating", State: viewmodel.StateActive, ContextLimit: 64000},
+			validation: viewmodel.ValidationSummaryVM{
+				Criteria: []viewmodel.CriterionVM{
+					{Description: "tests pass", State: viewmodel.StateFailed},
+					{Description: "no regressions", State: viewmodel.StateBlocked},
+				},
+				Overall: viewmodel.StateBlocked, Blocked: 1,
+			},
+		},
+		"tool-failure": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "testing", State: viewmodel.StateActive, ContextLimit: 64000},
+			activity: []viewmodel.ActivityGroupVM{
+				{Kind: viewmodel.ActivityTesting, State: viewmodel.StateFailed, Count: 2, Errors: 1, DurationMS: 5000},
+			},
+		},
+		"context-pressure": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "thinking", State: viewmodel.StateActive, ContextUsed: 60000, ContextLimit: 64000, Cost: 1.20},
+			budget: viewmodel.ContextBudgetVM{
+				TotalTokens: 60000, LimitTokens: 64000,
+				Categories:    []viewmodel.ContextCategoryVM{{Label: "Active code", Tokens: 40000}, {Label: "Tool results", Tokens: 20000}},
+				ResidentPages: 12, PinnedPages: 2, SavedTokens: 8000,
+			},
+		},
+		"cost-warning": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "thinking", State: viewmodel.StateActive, ContextUsed: 30000, ContextLimit: 64000, Cost: 4.75},
+		},
+		"completed-unverified": {
+			header:     viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "completed", State: viewmodel.StateCompleted, ContextLimit: 64000},
+			validation: viewmodel.BuildValidationSummary([]viewmodel.CriterionInput{{Description: "tests pass"}, {Description: "builds"}}),
+		},
+	}
+}
+
+var widths = map[string]int{"wide": 100, "medium": 60, "narrow": 30}
+
+func TestGoldenSnapshots(t *testing.T) {
+	for name, f := range fixtures() {
+		for wname, w := range widths {
+			got := f.render(w)
+			golden := filepath.Join("testdata", name+"."+wname+".golden")
+			if *update {
+				if err := os.MkdirAll("testdata", 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				continue
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("missing golden %s (run: go test ./internal/tui/visual -update): %v", golden, err)
+			}
+			if got != string(want) {
+				t.Fatalf("golden %s mismatch — snapshots are reviewed as visual changes, not mechanically accepted:\n--- got ---\n%s\n--- want ---\n%s", golden, got, want)
+			}
+			// Every rendered line must fit within its width budget.
+			for _, line := range strings.Split(got, "\n") {
+				if len([]rune(line)) > w {
+					t.Fatalf("%s@%s: line exceeds width %d: %q", name, wname, w, line)
+				}
+			}
+		}
+	}
+}
+
+// TestSemanticInvariants asserts state semantics independent of the golden text
+// so a mechanical golden update can never silently break a safety property.
+func TestSemanticInvariants(t *testing.T) {
+	f := fixtures()
+
+	// A stopped/unverified task never renders as validated (§13.9).
+	unverified := f["completed-unverified"].render(100)
+	if strings.Contains(unverified, "validated") {
+		t.Fatalf("completed-unverified must not claim validated:\n%s", unverified)
+	}
+	if !strings.Contains(unverified, "unverified") {
+		t.Fatalf("completed-unverified must read unverified:\n%s", unverified)
+	}
+
+	// A validation failure surfaces blocked/failed, never validated.
+	fail := f["validation-failure"].render(100)
+	if strings.Contains(fail, "validated") || !strings.Contains(fail, "failed") {
+		t.Fatalf("validation-failure must show failed and never validated:\n%s", fail)
+	}
+
+	// A tool failure never hides its error (§13.7).
+	if !strings.Contains(f["tool-failure"].render(100), "failed") {
+		t.Fatalf("tool-failure must surface the error state")
+	}
+
+	// Context pressure shows a high percentage (§13.11).
+	if !strings.Contains(f["context-pressure"].render(100), "93%") {
+		t.Fatalf("context-pressure header should show ~93%% usage")
+	}
+
+	// The cost warning fixture surfaces the real cost.
+	if !strings.Contains(f["cost-warning"].render(100), "$4.75") {
+		t.Fatalf("cost-warning must show the cost")
+	}
+}

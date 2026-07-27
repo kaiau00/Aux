@@ -1,0 +1,11 @@
+aux-cli @feat/x  add the widget  ● editing  active  Opus
+
+ Activity
+ ✓ Searching  3×  240ms
+ ▶ Editing  2×  1.2s
+
+ Changes  ~1
+ ~ widget.go
+
+ Validation · unverified
+ ○ unverified  tests pass
