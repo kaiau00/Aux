@@ -17,8 +17,10 @@ import (
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/tui/components/activity"
+	"github.com/aux-ai/aux-cli/internal/tui/components/workbench"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/aux-ai/aux-cli/internal/validation"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -56,6 +58,14 @@ type ContextPaneCmp struct {
 	// projected from durable tool events (roadmapplan.md §13.7). Refreshed on
 	// message updates and session changes; empty when there is nothing to show.
 	activity []viewmodel.ActivityGroupVM
+
+	// validation and changes are the task workbench (roadmapplan.md §13.8/§13.9)
+	// for the session's task. hasTask is false when the session has no task, so
+	// the sections are hidden rather than faked. Changes render "no changes yet"
+	// as an informative state once a task exists.
+	validation viewmodel.ValidationSummaryVM
+	changes    viewmodel.ChangeSummaryVM
+	hasTask    bool
 
 	// editorFocused suppresses pane hotkeys while the editor textarea is
 	// active so the user can type x/u/c/j/k without triggering context
@@ -120,8 +130,10 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = 0
 			m.offset = 0
 			m.activity = nil
+			m.hasTask = false
 			m.mu.Unlock()
 			m.refreshActivity()
+			m.refreshWorkbench()
 		}
 	case SessionClearedMsg:
 		m.sessionID = ""
@@ -130,6 +142,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = 0
 		m.offset = 0
 		m.activity = nil
+		m.hasTask = false
 		m.mu.Unlock()
 	case pubsub.Event[message.Message]:
 		if m.sessionID == "" || msg.Payload.SessionID != m.sessionID {
@@ -138,6 +151,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == pubsub.CreatedEvent || msg.Type == pubsub.UpdatedEvent {
 			m.absorbMessage(msg.Payload)
 			m.refreshActivity()
+			m.refreshWorkbench()
 		}
 		return m, func() tea.Msg {
 			ctx := context.Background()
@@ -317,6 +331,7 @@ func (m *ContextPaneCmp) View() string {
 		Render(fmt.Sprintf(" Context (%d)", len(entries)))
 	dashboard := m.dashboardView()
 	activitySection := m.activityView()
+	workbenchSection := m.workbenchView()
 
 	footer := baseStyle.
 		Width(m.width).
@@ -333,6 +348,9 @@ func (m *ContextPaneCmp) View() string {
 		if activitySection != "" {
 			sections = append(sections, activitySection, " ")
 		}
+		if workbenchSection != "" {
+			sections = append(sections, workbenchSection, " ")
+		}
 		sections = append(sections, header, " ", empty, " ", footer)
 		return baseStyle.
 			Width(m.width).
@@ -340,11 +358,14 @@ func (m *ContextPaneCmp) View() string {
 			Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 	}
 
-	activityHeight := 0
+	extraHeight := 0
 	if activitySection != "" {
-		activityHeight = lipgloss.Height(activitySection) + 1 // section + spacer
+		extraHeight += lipgloss.Height(activitySection) + 1 // section + spacer
 	}
-	bodyHeight := m.height - lipgloss.Height(dashboard) - activityHeight - 5
+	if workbenchSection != "" {
+		extraHeight += lipgloss.Height(workbenchSection) + 1
+	}
+	bodyHeight := m.height - lipgloss.Height(dashboard) - extraHeight - 5
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -371,6 +392,9 @@ func (m *ContextPaneCmp) View() string {
 	sections := []string{dashboard, " "}
 	if activitySection != "" {
 		sections = append(sections, activitySection, " ")
+	}
+	if workbenchSection != "" {
+		sections = append(sections, workbenchSection, " ")
 	}
 	sections = append(sections,
 		header,
@@ -421,6 +445,90 @@ func (m *ContextPaneCmp) activityView() string {
 		groups = groups[len(groups)-maxActivityRows:]
 	}
 	return activity.Render(groups, m.width)
+}
+
+// refreshWorkbench rebuilds the task workbench — changes (§13.8) and
+// acceptance/proof-of-done (§13.9) — for the session's task. Criteria without
+// evidence stay unverified: the surface never implies success because the agent
+// stopped. Changes come from the task's latest checkpoint, so they read "no
+// changes yet" until a checkpoint exists.
+func (m *ContextPaneCmp) refreshWorkbench() {
+	if m.app == nil || m.app.Tasks == nil || m.sessionID == "" {
+		m.mu.Lock()
+		m.hasTask = false
+		m.mu.Unlock()
+		return
+	}
+	ctx := context.Background()
+	tasks, err := m.app.Tasks.ListBySession(ctx, m.sessionID)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+	latest := tasks[len(tasks)-1]
+
+	validationVM := m.buildValidation(ctx, latest.ID)
+	changesVM := m.buildChanges(ctx, latest.ID)
+
+	m.mu.Lock()
+	m.validation = validationVM
+	m.changes = changesVM
+	m.hasTask = true
+	m.mu.Unlock()
+}
+
+// buildValidation joins the task's acceptance criteria with proof-of-done.
+func (m *ContextPaneCmp) buildValidation(ctx context.Context, taskID string) viewmodel.ValidationSummaryVM {
+	spec, ok, err := m.app.Tasks.LatestSpec(ctx, taskID)
+	if err != nil || !ok || len(spec.AcceptanceCriteria) == 0 {
+		return viewmodel.BuildValidationSummary(nil)
+	}
+	ids := make([]string, 0, len(spec.AcceptanceCriteria))
+	for _, c := range spec.AcceptanceCriteria {
+		ids = append(ids, c.ID)
+	}
+	var states map[string]validation.CriterionState
+	if m.app.Validations != nil {
+		states, _ = m.app.Validations.ProofOfDone(ctx, taskID, ids)
+	}
+	inputs := make([]viewmodel.CriterionInput, 0, len(spec.AcceptanceCriteria))
+	for _, c := range spec.AcceptanceCriteria {
+		inputs = append(inputs, viewmodel.CriterionInput{Description: c.Description, State: states[c.ID]})
+	}
+	return viewmodel.BuildValidationSummary(inputs)
+}
+
+// buildChanges projects the task's latest checkpoint into a change summary. An
+// empty result renders as the informative "no changes yet" state.
+func (m *ContextPaneCmp) buildChanges(ctx context.Context, taskID string) viewmodel.ChangeSummaryVM {
+	if m.app.CheckpointStore == nil {
+		return viewmodel.ChangeSummaryVM{}
+	}
+	cps, err := m.app.CheckpointStore.ListByTask(ctx, taskID)
+	if err != nil || len(cps) == 0 {
+		return viewmodel.ChangeSummaryVM{}
+	}
+	entries, err := m.app.CheckpointStore.Entries(ctx, cps[len(cps)-1].ID)
+	if err != nil {
+		return viewmodel.ChangeSummaryVM{}
+	}
+	return viewmodel.BuildChangeSummary(entries)
+}
+
+// workbenchView renders the changes + validation sections, or "" when the
+// session has no task yet.
+func (m *ContextPaneCmp) workbenchView() string {
+	m.mu.Lock()
+	has := m.hasTask
+	changesVM := m.changes
+	validationVM := m.validation
+	m.mu.Unlock()
+	if !has {
+		return ""
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		workbench.RenderChanges(changesVM, m.width),
+		workbench.RenderValidation(validationVM, m.width),
+	)
 }
 
 func (m *ContextPaneCmp) dashboardView() string {

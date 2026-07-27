@@ -41,24 +41,25 @@ import (
 )
 
 type App struct {
-	Sessions     session.Service
-	Messages     message.Service
-	History      history.Service
-	Permissions  permission.Service
-	Cost         cost.Service
-	Events       eventstore.Service
-	ToolRecorder tools.Recorder
-	Projects     *project.Service
-	Profiles     *profile.Service
-	Tasks        *task.Store
-	TaskCoord    *task.Coordinator
-	Artifacts    *artifact.Service
-	Pages        *contextstore.Store
-	Memories     *memory.Service
-	Impact       *impact.Service
-	Validations  *validation.Service
-	Skills       *skill.Service
-	Checkpoints  *checkpoint.Service
+	Sessions        session.Service
+	Messages        message.Service
+	History         history.Service
+	Permissions     permission.Service
+	Cost            cost.Service
+	Events          eventstore.Service
+	ToolRecorder    tools.Recorder
+	Projects        *project.Service
+	Profiles        *profile.Service
+	Tasks           *task.Store
+	TaskCoord       *task.Coordinator
+	Artifacts       *artifact.Service
+	Pages           *contextstore.Store
+	Memories        *memory.Service
+	Impact          *impact.Service
+	Validations     *validation.Service
+	Skills          *skill.Service
+	Checkpoints     *checkpoint.Service
+	CheckpointStore *checkpoint.Store
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -99,28 +100,30 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	pages := contextstore.NewStore(conn)
 	impactSvc := impact.NewService(impact.NewStore(conn))
 	skills := skill.NewService(skill.NewStore(conn), events)
-	checkpoints := checkpoint.NewService(checkpoint.NewStore(conn), artifacts, events)
+	checkpointStore := checkpoint.NewStore(conn)
+	checkpoints := checkpoint.NewService(checkpointStore, artifacts, events)
 
 	app := &App{
-		Sessions:     sessions,
-		Messages:     messages,
-		History:      files,
-		Permissions:  permission.NewPermissionService(),
-		Cost:         ledger,
-		Events:       events,
-		ToolRecorder: toolRecorder,
-		Projects:     projects,
-		Profiles:     profiles,
-		Tasks:        taskStore,
-		TaskCoord:    taskCoord,
-		Artifacts:    artifacts,
-		Pages:        pages,
-		Memories:     memories,
-		Impact:       impactSvc,
-		Validations:  validations,
-		Skills:       skills,
-		Checkpoints:  checkpoints,
-		LSPClients:   make(map[string]*lsp.Client),
+		Sessions:        sessions,
+		Messages:        messages,
+		History:         files,
+		Permissions:     permission.NewPermissionService(),
+		Cost:            ledger,
+		Events:          events,
+		ToolRecorder:    toolRecorder,
+		Projects:        projects,
+		Profiles:        profiles,
+		Tasks:           taskStore,
+		TaskCoord:       taskCoord,
+		Artifacts:       artifacts,
+		Pages:           pages,
+		Memories:        memories,
+		Impact:          impactSvc,
+		Validations:     validations,
+		Skills:          skills,
+		Checkpoints:     checkpoints,
+		CheckpointStore: checkpointStore,
+		LSPClients:      make(map[string]*lsp.Client),
 	}
 
 	// Initialize theme based on configuration
@@ -185,7 +188,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 			Tasks:       app.Tasks,
 			Events:      app.Events,
 			Validations: app.Validations,
-			Checkpoints: checkpoint.NewStore(conn),
+			Checkpoints: app.CheckpointStore,
 			Pages:       app.Pages,
 			Ledger:      app.Cost,
 		},
