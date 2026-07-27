@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/artifact"
+	"github.com/aux-ai/aux-cli/internal/checkpoint"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/cost"
@@ -56,6 +57,7 @@ type App struct {
 	Impact       *impact.Service
 	Validations  *validation.Service
 	Skills       *skill.Service
+	Checkpoints  *checkpoint.Service
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -96,6 +98,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	pages := contextstore.NewStore(conn)
 	impactSvc := impact.NewService(impact.NewStore(conn))
 	skills := skill.NewService(skill.NewStore(conn), events)
+	checkpoints := checkpoint.NewService(checkpoint.NewStore(conn), artifacts, events)
 
 	app := &App{
 		Sessions:     sessions,
@@ -115,6 +118,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Impact:       impactSvc,
 		Validations:  validations,
 		Skills:       skills,
+		Checkpoints:  checkpoints,
 		LSPClients:   make(map[string]*lsp.Client),
 	}
 

@@ -50,6 +50,14 @@ type TaskPayload struct {
 	ProfileVersionID string `json:"profileVersionId,omitempty"`
 }
 
+// CheckpointPayload accompanies checkpoint.* events.
+type CheckpointPayload struct {
+	CheckpointID string `json:"checkpointId"`
+	ParentID     string `json:"parentId,omitempty"`
+	Label        string `json:"label,omitempty"`
+	Entries      int    `json:"entries,omitempty"`
+}
+
 // SkillPayload accompanies skill.* events.
 type SkillPayload struct {
 	SkillID   string `json:"skillId"`
