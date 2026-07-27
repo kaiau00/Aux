@@ -8,10 +8,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/message"
@@ -21,6 +17,10 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type editorCmp struct {
@@ -222,28 +222,54 @@ func (m *editorCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *editorCmp) View() string {
 	t := theme.CurrentTheme()
 
+	// Composer placeholder reflects new-task vs follow-up vs command (§13.10).
+	followUp := m.session.ID != ""
+	slash := isSlashCommand(m.textarea.Value())
+	m.textarea.Placeholder = composerPlaceholder(followUp, slash)
+
 	// Style the prompt with theme colors
 	style := lipgloss.NewStyle().
 		Padding(0, 0, 0, 1).
 		Bold(true).
 		Foreground(t.Primary())
 
-	if len(m.attachments) == 0 {
-		return lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"), m.textarea.View())
+	hasAttachments := len(m.attachments) > 0
+	if hasAttachments {
+		m.textarea.SetHeight(max(1, m.height-2)) // reserve attachments row + hint line
+	} else {
+		m.textarea.SetHeight(max(1, m.height-1)) // reserve hint line
 	}
-	m.textarea.SetHeight(m.height - 1)
-	return lipgloss.JoinVertical(lipgloss.Top,
-		m.attachmentsContent(),
-		lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"),
-			m.textarea.View()),
-	)
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, style.Render(">"), m.textarea.View())
+	if hasAttachments {
+		body = lipgloss.JoinVertical(lipgloss.Top, m.attachmentsContent(), body)
+	}
+	return lipgloss.JoinVertical(lipgloss.Top, body, m.hintLine())
+}
+
+// hintLine renders the compact, state-aware shortcut hint below the composer
+// (§13.10). It never overflows the editor width.
+func (m *editorCmp) hintLine() string {
+	t := theme.CurrentTheme()
+	busy := m.session.ID != "" && m.app != nil && m.app.CoderAgent != nil &&
+		m.app.CoderAgent.IsSessionBusy(m.session.ID)
+	hint := composerHint(m.textarea.Focused(), busy, len(m.attachments) > 0)
+	color := t.TextMuted()
+	if busy {
+		color = t.Warning()
+	}
+	return lipgloss.NewStyle().
+		Width(m.width).
+		MaxWidth(m.width).
+		Foreground(color).
+		Render(" " + hint)
 }
 
 func (m *editorCmp) SetSize(width, height int) tea.Cmd {
 	m.width = width
 	m.height = height
-	m.textarea.SetWidth(width - 3) // account for the prompt and padding right
-	m.textarea.SetHeight(height)
+	m.textarea.SetWidth(width - 3)         // account for the prompt and padding right
+	m.textarea.SetHeight(max(1, height-1)) // reserve one line for the hint (§13.10)
 	m.textarea.SetWidth(width)
 	return nil
 }

@@ -4,9 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/completions"
 	"github.com/aux-ai/aux-cli/internal/message"
@@ -15,6 +12,9 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/components/dialog"
 	"github.com/aux-ai/aux-cli/internal/tui/layout"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var ChatPage PageID = "chat"
@@ -224,6 +224,9 @@ func NewChatPage(app *app.App) tea.Model {
 			layout.WithLeftPanel(messagesContainer),
 			layout.WithRightPanel(contextPaneContainer),
 			layout.WithBottomPanel(editorContainer),
+			// Narrow terminals drop to a single conversation column so core task
+			// operation stays usable at every breakpoint (§13.10).
+			layout.WithCollapseRightBelow(80),
 		),
 	}
 }
