@@ -11,12 +11,15 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/app"
+	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
+	"github.com/aux-ai/aux-cli/internal/llm/models"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/tui/components/activity"
+	"github.com/aux-ai/aux-cli/internal/tui/components/contextbudget"
 	"github.com/aux-ai/aux-cli/internal/tui/components/workbench"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
@@ -66,6 +69,12 @@ type ContextPaneCmp struct {
 	validation viewmodel.ValidationSummaryVM
 	changes    viewmodel.ChangeSummaryVM
 	hasTask    bool
+
+	// budget is the context signature composition (roadmapplan.md §13.11),
+	// projected from the latest model call's page bindings — the same manifest
+	// the model received. Empty (and hidden) until demand paging records
+	// bindings, leaving the file list below as the compatibility adapter.
+	budget viewmodel.ContextBudgetVM
 
 	// editorFocused suppresses pane hotkeys while the editor textarea is
 	// active so the user can type x/u/c/j/k without triggering context
@@ -332,6 +341,7 @@ func (m *ContextPaneCmp) View() string {
 	dashboard := m.dashboardView()
 	activitySection := m.activityView()
 	workbenchSection := m.workbenchView()
+	budgetSection := m.budgetView()
 
 	footer := baseStyle.
 		Width(m.width).
@@ -351,6 +361,9 @@ func (m *ContextPaneCmp) View() string {
 		if workbenchSection != "" {
 			sections = append(sections, workbenchSection, " ")
 		}
+		if budgetSection != "" {
+			sections = append(sections, budgetSection, " ")
+		}
 		sections = append(sections, header, " ", empty, " ", footer)
 		return baseStyle.
 			Width(m.width).
@@ -364,6 +377,9 @@ func (m *ContextPaneCmp) View() string {
 	}
 	if workbenchSection != "" {
 		extraHeight += lipgloss.Height(workbenchSection) + 1
+	}
+	if budgetSection != "" {
+		extraHeight += lipgloss.Height(budgetSection) + 1
 	}
 	bodyHeight := m.height - lipgloss.Height(dashboard) - extraHeight - 5
 	if bodyHeight < 1 {
@@ -395,6 +411,9 @@ func (m *ContextPaneCmp) View() string {
 	}
 	if workbenchSection != "" {
 		sections = append(sections, workbenchSection, " ")
+	}
+	if budgetSection != "" {
+		sections = append(sections, budgetSection, " ")
 	}
 	sections = append(sections,
 		header,
@@ -468,12 +487,75 @@ func (m *ContextPaneCmp) refreshWorkbench() {
 
 	validationVM := m.buildValidation(ctx, latest.ID)
 	changesVM := m.buildChanges(ctx, latest.ID)
+	budgetVM := m.buildBudget(ctx, latest.ID)
 
 	m.mu.Lock()
 	m.validation = validationVM
 	m.changes = changesVM
+	m.budget = budgetVM
 	m.hasTask = true
 	m.mu.Unlock()
+}
+
+// buildBudget projects the latest model call's page bindings into a context
+// budget (roadmapplan.md §13.11). It reconciles with the prompt manifest because
+// it reads the very bindings recorded for that call. Empty until demand paging
+// records bindings.
+func (m *ContextPaneCmp) buildBudget(ctx context.Context, taskID string) viewmodel.ContextBudgetVM {
+	if m.app.Pages == nil || m.app.Cost == nil {
+		return viewmodel.ContextBudgetVM{}
+	}
+	calls, err := m.app.Cost.ListCallsByTask(ctx, taskID)
+	if err != nil || len(calls) == 0 {
+		return viewmodel.ContextBudgetVM{}
+	}
+	last := calls[len(calls)-1]
+	bindings, err := m.app.Pages.BindingsForCall(ctx, last.ID)
+	if err != nil || len(bindings) == 0 {
+		return viewmodel.ContextBudgetVM{}
+	}
+	return viewmodel.BuildContextBudget(bindings, contextLimitTokens(), m.savedTokens(ctx))
+}
+
+// contextLimitTokens returns the configured coder model's context window, or 0
+// when unknown (the budget header then omits the ratio rather than faking it).
+func contextLimitTokens() int64 {
+	coder, ok := config.Get().Agents[config.AgentCoder]
+	if !ok {
+		return 0
+	}
+	return models.SupportedModels[coder.Model].ContextWindow
+}
+
+// savedTokens reads the latest context.compiled event's saved-token count for
+// the session, so the budget can show real delta/artifact reuse (§13.11).
+func (m *ContextPaneCmp) savedTokens(ctx context.Context) int64 {
+	if m.app.Events == nil {
+		return 0
+	}
+	events, err := m.app.Events.List(ctx, eventstore.Filter{SessionID: m.sessionID})
+	if err != nil {
+		return 0
+	}
+	var saved int64
+	for _, e := range events {
+		if e.Type == eventstore.ContextCompiled {
+			var cp eventstore.ContextPayload
+			if e.DecodePayload(&cp) == nil {
+				saved = cp.SavedTokens
+			}
+		}
+	}
+	return saved
+}
+
+// budgetView renders the context budget, or "" when there are no page bindings
+// yet (paging off), so the file list below remains the compatibility adapter.
+func (m *ContextPaneCmp) budgetView() string {
+	m.mu.Lock()
+	vm := m.budget
+	m.mu.Unlock()
+	return contextbudget.Render(vm, m.width)
 }
 
 // buildValidation joins the task's acceptance criteria with proof-of-done.
