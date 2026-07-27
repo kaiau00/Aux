@@ -11,12 +11,15 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/app"
+	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/session"
+	"github.com/aux-ai/aux-cli/internal/tui/components/activity"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -48,6 +51,11 @@ type ContextPaneCmp struct {
 	entries   []ContextEntry
 	selected  int
 	offset    int
+
+	// activity holds the grouped runtime activity for the current session,
+	// projected from durable tool events (roadmapplan.md §13.7). Refreshed on
+	// message updates and session changes; empty when there is nothing to show.
+	activity []viewmodel.ActivityGroupVM
 
 	// editorFocused suppresses pane hotkeys while the editor textarea is
 	// active so the user can type x/u/c/j/k without triggering context
@@ -111,7 +119,9 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries = nil
 			m.selected = 0
 			m.offset = 0
+			m.activity = nil
 			m.mu.Unlock()
+			m.refreshActivity()
 		}
 	case SessionClearedMsg:
 		m.sessionID = ""
@@ -119,6 +129,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.entries = nil
 		m.selected = 0
 		m.offset = 0
+		m.activity = nil
 		m.mu.Unlock()
 	case pubsub.Event[message.Message]:
 		if m.sessionID == "" || msg.Payload.SessionID != m.sessionID {
@@ -126,6 +137,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Type == pubsub.CreatedEvent || msg.Type == pubsub.UpdatedEvent {
 			m.absorbMessage(msg.Payload)
+			m.refreshActivity()
 		}
 		return m, func() tea.Msg {
 			ctx := context.Background()
@@ -304,6 +316,7 @@ func (m *ContextPaneCmp) View() string {
 		Bold(true).
 		Render(fmt.Sprintf(" Context (%d)", len(entries)))
 	dashboard := m.dashboardView()
+	activitySection := m.activityView()
 
 	footer := baseStyle.
 		Width(m.width).
@@ -316,24 +329,22 @@ func (m *ContextPaneCmp) View() string {
 			Foreground(t.TextMuted()).
 			Italic(true).
 			Render(" no files loaded yet")
+		sections := []string{dashboard, " "}
+		if activitySection != "" {
+			sections = append(sections, activitySection, " ")
+		}
+		sections = append(sections, header, " ", empty, " ", footer)
 		return baseStyle.
 			Width(m.width).
 			Height(m.height).
-			Render(
-				lipgloss.JoinVertical(
-					lipgloss.Left,
-					dashboard,
-					" ",
-					header,
-					" ",
-					empty,
-					" ",
-					footer,
-				),
-			)
+			Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 	}
 
-	bodyHeight := m.height - lipgloss.Height(dashboard) - 5
+	activityHeight := 0
+	if activitySection != "" {
+		activityHeight = lipgloss.Height(activitySection) + 1 // section + spacer
+	}
+	bodyHeight := m.height - lipgloss.Height(dashboard) - activityHeight - 5
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -357,20 +368,59 @@ func (m *ContextPaneCmp) View() string {
 		rows = append(rows, m.renderRow(entries[i], i == selected, m.width))
 	}
 
+	sections := []string{dashboard, " "}
+	if activitySection != "" {
+		sections = append(sections, activitySection, " ")
+	}
+	sections = append(sections,
+		header,
+		lipgloss.JoinVertical(lipgloss.Left, rows...),
+		" ",
+		footer,
+	)
 	return baseStyle.
 		Width(m.width).
 		Height(m.height).
-		Render(
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				dashboard,
-				" ",
-				header,
-				lipgloss.JoinVertical(lipgloss.Left, rows...),
-				" ",
-				footer,
-			),
-		)
+		Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
+}
+
+// maxActivityRows bounds how many activity groups the pane shows so the section
+// never crowds out the context list. There are at most a handful of kinds.
+const maxActivityRows = 6
+
+// refreshActivity rebuilds the grouped activity for the current session from
+// durable tool events (roadmapplan.md §13.7). Failures are ignored so
+// observability never disturbs the pane; empty results simply hide the section.
+func (m *ContextPaneCmp) refreshActivity() {
+	if m.app == nil || m.app.Events == nil || m.sessionID == "" {
+		m.mu.Lock()
+		m.activity = nil
+		m.mu.Unlock()
+		return
+	}
+	events, err := m.app.Events.List(context.Background(), eventstore.Filter{SessionID: m.sessionID})
+	if err != nil {
+		return
+	}
+	groups := viewmodel.BuildActivityGroups(events)
+	m.mu.Lock()
+	m.activity = groups
+	m.mu.Unlock()
+}
+
+// activityView renders the bounded activity section, or "" when there is nothing
+// to show.
+func (m *ContextPaneCmp) activityView() string {
+	m.mu.Lock()
+	groups := append([]viewmodel.ActivityGroupVM(nil), m.activity...)
+	m.mu.Unlock()
+	if len(groups) == 0 {
+		return ""
+	}
+	if len(groups) > maxActivityRows {
+		groups = groups[len(groups)-maxActivityRows:]
+	}
+	return activity.Render(groups, m.width)
 }
 
 func (m *ContextPaneCmp) dashboardView() string {
