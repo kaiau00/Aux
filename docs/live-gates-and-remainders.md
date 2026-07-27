@@ -60,30 +60,35 @@ that needs credentials is **driving the two agent runs** with a real provider �
 that turnkey `aux eval live` runner is not built here because it cannot be
 verified without spending budget.
 
-## Deferred Phase 1.6/1.7 remainders (by section)
+## Now implemented (previously deferred)
 
-- **§9.6 / §10.3 / §16.7 live A/B runner** — the turnkey opt-in command above;
-  needs provider credentials to implement and verify.
-- **§11.1 first-mutation-time checkpointing** — auto-checkpoint now runs at task
-  completion (`Coordinator.captureCheckpoint`), which populates the changes
-  workbench truthfully. Snapshotting at the first mutation (for mid-run rollback)
-  is the remaining refinement.
-- **§11.2 related-project cross-repo graph** — cross-repository dependency graph
-  and related-project resolution.
-- **§11.4 multi-repository child tasks** — coordinating child tasks across repos.
-- **§12.3 lifecycle hooks** — the versioned local read API exists
-  (`GET /api/v1/...`, token-gated, read-only); local lifecycle hooks for
-  tools/plugins remain.
-- **§12.4 runtime adapters** — pluggable runtime adapters.
-- **§12.5 shareable / org bundles** — exportable optimization bundles.
+These are built and tested offline:
 
-## Deferred Phase 2 front-end (by section)
+- **§9.7 learned policy promotion** — `internal/govpolicy`, evaluation-gated like
+  skills, with rollback + evidence trail.
+- **§9.6 / §10.3 comparison** — `aux eval ab` (`internal/eval` A/B runner).
+- **§11.1 first-mutation checkpointing** — `internal/mutationcp`, in addition to
+  completion-time capture.
+- **§11.2 related-project graph** — `internal/relatedproject`.
+- **§11.4 multi-repo child tasks** — `internal/multirepo` compiler.
+- **§12.3 lifecycle hooks** — `internal/hooks`, dispatched at task boundaries.
+- **§12.4 runtime adapters** — `internal/runtime` Adapter + `runtimetest`
+  conformance contract.
+- **§12.5 shareable bundles** — `internal/bundle` (`aux bundle export|import`);
+  imports arrive as candidates.
+- **§13.12 / §13.14 active-task dashboard** — `/tasks` workspace backed by
+  `/api/v1`.
 
-- **§13.12 / §13.14** — the active-task-first dashboard HTML shell (stage rail,
-  summary row, timeline, inspector) and deep task/diff/evidence/profile/memory/
-  skill/graph views. The read models and `/api/v1` endpoints that back them, plus
-  the `css/`/`js/` asset-split foundation, are in place; the remaining work is
-  browser markup/CSS/JS not verifiable in this environment.
-- **§13.19 browser verification** — DOM/screenshot/contrast/SSE regression. The
-  TUI golden-snapshot + semantic-invariant coverage is in place
-  (`internal/tui/visual`); browser screenshot regression is not runnable here.
+## Genuinely remaining (need external resources)
+
+- **§9.6 / §10.3 / §16.7 live A/B *execution*** — driving the two agent runs with
+  a real provider to produce the dollar-efficiency *number*. The comparison,
+  gates, and promotion that consume it are done; only the credentialed run is not
+  (it cannot be verified here without spending budget).
+- **§13.19 browser screenshot / contrast / SSE regression** — needs a browser.
+  The TUI golden + semantic coverage (`internal/tui/visual`) is in place, and the
+  dashboard views are DOM/route tested, but pixel/contrast regression is not
+  runnable in this environment.
+- **Full live multi-repo / cross-repo execution end to end** — the graph
+  (§11.2) and multi-repo compiler (§11.4) are built and tested; exercising them
+  across several real indexed repositories with a provider is environment-bound.
