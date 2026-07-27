@@ -11,6 +11,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/checkpoint"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/history"
+	"github.com/aux-ai/aux-cli/internal/hooks"
 	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/memory"
@@ -58,6 +59,7 @@ type Coordinator struct {
 	validations *validation.Service
 	history     FileLister
 	checkpoints CheckpointCreator
+	hooks       *hooks.Registry
 	workdir     string
 
 	mu     sync.Mutex
@@ -89,6 +91,13 @@ func (c *Coordinator) WithValidation(v *validation.Service) *Coordinator {
 func (c *Coordinator) WithCheckpoints(files FileLister, checkpoints CheckpointCreator) *Coordinator {
 	c.history = files
 	c.checkpoints = checkpoints
+	return c
+}
+
+// WithHooks wires a lifecycle-hook registry so local extensions can observe task
+// begin/end (roadmapplan.md §12.3). Optional; nil dispatch is a no-op.
+func (c *Coordinator) WithHooks(r *hooks.Registry) *Coordinator {
+	c.hooks = r
 	return c
 }
 
@@ -156,6 +165,7 @@ func (c *Coordinator) Begin(ctx context.Context, sessionID, objective string) (c
 
 	ctx = context.WithValue(ctx, tools.TaskIDContextKey, taskID)
 	ctx = context.WithValue(ctx, tools.ProjectIDContextKey, res.Project.ID)
+	_ = c.hooks.Dispatch(ctx, hooks.Event{Point: hooks.TaskBegin, TaskID: taskID, SessionID: sessionID})
 	// Offer the compiled project manifest (plus any relevant prior memory) and the
 	// task spec to the prompt compiler as available context pages (§7.1, §8.4).
 	manifest := eff.Manifest + c.memorySection(ctx, res.Project.ID)
@@ -197,6 +207,9 @@ func (c *Coordinator) Finish(ctx context.Context, taskID, outcome string) {
 	})
 	c.captureCheckpoint(context.Background(), taskID, sessionID)
 	c.learnFromTask(context.Background(), taskID, outcome)
+	_ = c.hooks.Dispatch(context.Background(), hooks.Event{
+		Point: hooks.TaskEnd, TaskID: taskID, SessionID: sessionID, Outcome: outcome,
+	})
 }
 
 // captureCheckpoint records what a completed task changed by snapshotting the

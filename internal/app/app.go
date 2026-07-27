@@ -21,6 +21,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/format"
 	"github.com/aux-ai/aux-cli/internal/govpolicy"
 	"github.com/aux-ai/aux-cli/internal/history"
+	"github.com/aux-ai/aux-cli/internal/hooks"
 	"github.com/aux-ai/aux-cli/internal/impact"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
@@ -62,6 +63,7 @@ type App struct {
 	Policies        *govpolicy.Service
 	Checkpoints     *checkpoint.Service
 	CheckpointStore *checkpoint.Store
+	Hooks           *hooks.Registry
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -92,8 +94,9 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	taskStore := task.NewStore(conn)
 	memories := memory.NewService(memory.NewStore(conn), events)
 	validations := validation.NewService(validation.NewStore(conn), events)
+	hookRegistry := hooks.NewRegistry()
 	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory()).
-		WithMemory(memories).WithValidation(validations)
+		WithMemory(memories).WithValidation(validations).WithHooks(hookRegistry)
 	// Content-addressed artifact store, with bytes under the app data directory.
 	artifacts := artifact.NewService(
 		artifact.NewFSBackend(filepath.Join(config.Get().Data.Directory, "artifacts")),
@@ -130,6 +133,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Policies:        policies,
 		Checkpoints:     checkpoints,
 		CheckpointStore: checkpointStore,
+		Hooks:           hookRegistry,
 		LSPClients:      make(map[string]*lsp.Client),
 	}
 
