@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aux — Active Tasks</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/tasks.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">Aux</span>
+    <span class="subtitle">Active task workspace</span>
+  </header>
+  <main class="workspace">
+    <nav id="task-list" class="task-list" aria-label="Recent tasks">
+      <div class="empty">Loading tasks…</div>
+    </nav>
+    <section id="task-detail" class="task-detail" aria-live="polite">
+      <div class="empty">Select a task to see its state.</div>
+    </section>
+  </main>
+  <script src="js/tasks.js"></script>
+</body>
+</html>

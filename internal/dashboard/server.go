@@ -73,6 +73,7 @@ func Start(parent context.Context, services Services, options Options) (*Server,
 	server.url = fmt.Sprintf("http://%s/?token=%s", listener.Addr().String(), token)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", server.handleIndex)
+	mux.HandleFunc("GET /tasks", server.handleTasksPage)
 	mux.HandleFunc("GET /css/", server.handleStaticAsset)
 	mux.HandleFunc("GET /js/", server.handleStaticAsset)
 	mux.HandleFunc("/api/snapshot", server.handleSnapshot)
@@ -130,6 +131,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		http.Error(w, "dashboard asset missing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+// handleTasksPage serves the active-task workspace (roadmapplan.md §13.12), an
+// active-work-first view backed entirely by the read-only /api/v1 projections.
+// Token-gated like the rest of the dashboard.
+func (s *Server) handleTasksPage(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	data, err := assets.ReadFile("assets/tasks.html")
 	if err != nil {
 		http.Error(w, "dashboard asset missing", http.StatusInternalServerError)
 		return

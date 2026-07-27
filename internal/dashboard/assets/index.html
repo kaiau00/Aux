@@ -149,6 +149,8 @@
       </div>
     </div>
     <div class="status"><span class="pulse"></span><span id="connection">connecting</span><span id="mode"></span></div>
+    <a id="tasksLink" href="tasks" style="color:var(--amber-2);text-decoration:none;margin-left:1rem;font-size:.85rem">Active tasks →</a>
+    <script>document.getElementById('tasksLink').href = 'tasks' + location.search;</script>
   </header>
   <main>
     <section class="stats">
