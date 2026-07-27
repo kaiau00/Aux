@@ -3,11 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
+	"github.com/aux-ai/aux-cli/internal/llm/models"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/permission"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
@@ -19,6 +21,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/page"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -101,6 +104,7 @@ type appModel struct {
 	previousPage    page.PageID
 	pages           map[page.PageID]tea.Model
 	loadedPages     map[page.PageID]bool
+	header          core.TaskHeaderCmp
 	status          core.StatusCmp
 	app             *app.App
 	selectedSession session.Session
@@ -145,6 +149,8 @@ func (a appModel) Init() tea.Cmd {
 	cmd := a.pages[a.currentPage].Init()
 	a.loadedPages[a.currentPage] = true
 	cmds = append(cmds, cmd)
+	cmd = a.header.Init()
+	cmds = append(cmds, cmd)
 	cmd = a.status.Init()
 	cmds = append(cmds, cmd)
 	cmd = a.quit.Init()
@@ -184,8 +190,11 @@ func (a appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		msg.Height -= 1 // Make space for the status bar
+		msg.Height -= 2 // Make space for the task header and status bar
 		a.width, a.height = msg.Width, msg.Height
+
+		h, _ := a.header.Update(msg)
+		a.header = h.(core.TaskHeaderCmp)
 
 		s, _ := a.status.Update(msg)
 		a.status = s.(core.StatusCmp)
@@ -663,6 +672,40 @@ func (a appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
+// headerVM projects the current TUI state into a task-header view model
+// (roadmapplan.md §13.6). Every field traces to real runtime state — working
+// directory, configured model, the coder agent's busy state, and the selected
+// session's token/cost totals — never fabricated.
+func (a appModel) headerVM() viewmodel.TaskHeaderVM {
+	cfg := config.Get()
+	modelName := ""
+	var ctxLimit int64
+	if coder, ok := cfg.Agents[config.AgentCoder]; ok {
+		m := models.SupportedModels[coder.Model]
+		modelName = m.Name
+		ctxLimit = m.ContextWindow
+	}
+
+	stage, state := "idle", viewmodel.StateWaiting
+	if a.app != nil && a.app.CoderAgent != nil && a.app.CoderAgent.IsBusy() {
+		stage, state = "working", viewmodel.StateActive
+	}
+
+	vm := viewmodel.TaskHeaderVM{
+		Project:      filepath.Base(config.WorkingDirectory()),
+		Objective:    a.selectedSession.Title,
+		Stage:        stage,
+		State:        state,
+		Model:        modelName,
+		ContextLimit: ctxLimit,
+	}
+	if a.selectedSession.ID != "" {
+		vm.ContextUsed = a.selectedSession.PromptTokens + a.selectedSession.CompletionTokens
+		vm.Cost = a.selectedSession.Cost
+	}
+	return vm
+}
+
 // RegisterCommand adds a command to the command dialog
 func (a *appModel) RegisterCommand(cmd dialog.Command) {
 	a.commands = append(a.commands, cmd)
@@ -700,10 +743,16 @@ func (a *appModel) moveToPage(pageID page.PageID) tea.Cmd {
 }
 
 func (a appModel) View() string {
-	components := []string{
-		a.pages[a.currentPage].View(),
-	}
+	// The task header projects truthful runtime state (roadmapplan.md §13.6):
+	// project, active stage, model, context, and cost. It renders only once the
+	// terminal width is known.
+	a.header.SetVM(a.headerVM())
 
+	components := []string{}
+	if header := a.header.View(); header != "" {
+		components = append(components, header)
+	}
+	components = append(components, a.pages[a.currentPage].View())
 	components = append(components, a.status.View())
 
 	appView := lipgloss.JoinVertical(lipgloss.Top, components...)
@@ -903,6 +952,7 @@ func New(app *app.App) tea.Model {
 	model := &appModel{
 		currentPage:   startPage,
 		loadedPages:   make(map[page.PageID]bool),
+		header:        core.NewTaskHeaderCmp(),
 		status:        core.NewStatusCmp(app.LSPClients),
 		help:          dialog.NewHelpCmp(),
 		quit:          dialog.NewQuitCmp(),

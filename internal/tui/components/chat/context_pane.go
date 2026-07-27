@@ -377,28 +377,56 @@ func (m *ContextPaneCmp) dashboardView() string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
+	url := ""
+	if m.app != nil && m.app.Dashboard != nil {
+		url = m.app.Dashboard.URL()
+	}
+	live := url != ""
+
+	// Compact action/state instead of a bare, dominant URL (roadmapplan.md
+	// §13.6). The state is the primary signal; the full tokened URL follows only
+	// when live, so it stays available to open without leading the panel.
+	state := "off"
+	stateColor := t.TextMuted()
+	if live {
+		state = "live · " + dashboardHostPort(url)
+		stateColor = t.Success()
+	}
 	header := baseStyle.
 		Width(m.width).
 		Foreground(t.Primary()).
 		Bold(true).
 		Render(" Dashboard")
+	stateLine := baseStyle.
+		Width(m.width).
+		Foreground(stateColor).
+		Render(" " + state)
 
-	value := "disabled"
-	if m.app != nil && m.app.Dashboard != nil && m.app.Dashboard.URL() != "" {
-		value = m.app.Dashboard.URL()
+	parts := []string{header, stateLine}
+	if live {
+		for _, line := range wrapUnspaced(url, max(4, m.width-1)) {
+			parts = append(parts, baseStyle.
+				Width(m.width).
+				Foreground(t.TextMuted()).
+				Render(" "+line))
+		}
 	}
-
-	valueLines := wrapUnspaced(value, max(4, m.width-1))
-	for i, line := range valueLines {
-		valueLines[i] = baseStyle.
-			Width(m.width).
-			Foreground(t.TextMuted()).
-			Render(" " + line)
-	}
-	parts := append([]string{header}, valueLines...)
 	return baseStyle.
 		Width(m.width).
 		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// dashboardHostPort extracts the compact host:port from a dashboard URL,
+// omitting the scheme, path, and token so the panel shows a short live-state.
+func dashboardHostPort(url string) string {
+	rest := url
+	if i := strings.Index(rest, "://"); i >= 0 {
+		rest = rest[i+3:]
+	}
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 func wrapUnspaced(value string, width int) []string {
