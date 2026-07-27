@@ -34,9 +34,12 @@ The cost governor ships default-off and supports `off` / `observe` / `on`
 effect, run a fixed task set twice against the same model and compare accepted
 changes per dollar (and task success rate) from the per-task ledger:
 
-1. Baseline: set `costGovernor.mode: off`, run the task set, record `aux cost` per task.
-2. Governed: set `costGovernor.mode: on`, run the identical task set, record `aux cost` per task.
-3. Compare accepted-changes-per-dollar across the two runs.
+1. Baseline: set `costGovernor.mode: off`, run the task set, note each baseline task id.
+2. Governed: set `costGovernor.mode: on`, run the identical task set, note each variant task id.
+3. Compare: `aux eval ab <baseline-task-id> <variant-task-id>` — this computes
+   accepted validated changes per dollar for both runs from durable records
+   (ledger, proof-of-done, checkpoints) and reports whether the variant improved.
+   It is conservative: an unknown-cost run never counts as an improvement.
 
 The governor must not reduce task success on the fixture set for `on` to become a
 default. Until then it stays `observe` (measures, no behavior change).
@@ -50,11 +53,12 @@ this is the evaluation evidence `skill.Service.Promote` already requires.
 
 ### Note
 
-A single turnkey `aux eval live` A/B runner that drives the full agent runtime
-with real provider calls is **not yet implemented** (it is the piece that needs
-credentials to build and verify). The deterministic harness, governor flags, and
-evaluation-gated promotion it would drive are all in place; wiring the live A/B
-runner is tracked below.
+The **comparison** half of the gate is implemented and tested: `aux eval ab`
+computes the metric and improvement decision offline from two recorded runs, and
+`govpolicy` / `skill` promotion consume that pass/fail as evidence. The only part
+that needs credentials is **driving the two agent runs** with a real provider —
+that turnkey `aux eval live` runner is not built here because it cannot be
+verified without spending budget.
 
 ## Deferred Phase 1.6/1.7 remainders (by section)
 

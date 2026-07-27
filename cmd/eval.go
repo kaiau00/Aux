@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/aux-ai/aux-cli/internal/checkpoint"
 	"github.com/aux-ai/aux-cli/internal/config"
+	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/db"
 	"github.com/aux-ai/aux-cli/internal/eval"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
+	"github.com/aux-ai/aux-cli/internal/task"
+	"github.com/aux-ai/aux-cli/internal/validation"
 	"github.com/spf13/cobra"
 )
 
@@ -87,9 +91,55 @@ var evalReplayCmd = &cobra.Command{
 	},
 }
 
+var evalABCmd = &cobra.Command{
+	Use:   "ab <baseline-task-id> <variant-task-id>",
+	Short: "Compare accepted validated changes per dollar for two recorded runs (§9.6/§10.3)",
+	Long: "Computes the changes-per-dollar metric for a baseline and a variant task from " +
+		"durable records (ledger, proof-of-done, checkpoints) and reports whether the variant improved. " +
+		"Record the two runs on the same preferred model with the capability off vs on; " +
+		"see docs/live-gates-and-remainders.md.",
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if _, err := config.Load(cwd, false); err != nil {
+			return err
+		}
+		conn, err := db.Connect()
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		stores := eval.ABStores{
+			Tasks:       task.NewStore(conn),
+			Validations: validation.NewService(validation.NewStore(conn), nil),
+			Ledger:      cost.NewService(conn),
+			Checkpoints: checkpoint.NewStore(conn),
+		}
+		c, err := stores.CompareRuns(context.Background(), args[0], args[1])
+		if err != nil {
+			return err
+		}
+		printRun := func(label string, m eval.RunMetrics) {
+			fmt.Printf("  %-9s task=%s cost=$%.4f validated=%d changed=%d changes/$=%.3f%s\n",
+				label, m.TaskID, m.Cost, m.ValidatedCriteria, m.ChangedFiles, m.ChangesPerDollar,
+				map[bool]string{true: " (cost unknown)"}[m.CostUnknown])
+		}
+		fmt.Println("A/B comparison (accepted validated changes per dollar, same model):")
+		printRun("baseline", c.Baseline)
+		printRun("variant", c.Variant)
+		fmt.Printf("  delta=%.3f improved=%v\n", c.Delta, c.Improved)
+		return nil
+	},
+}
+
 func init() {
 	evalCmd.AddCommand(evalCompilerCmd)
 	evalCmd.AddCommand(evalExperimentCmd)
 	evalCmd.AddCommand(evalReplayCmd)
+	evalCmd.AddCommand(evalABCmd)
 	rootCmd.AddCommand(evalCmd)
 }
