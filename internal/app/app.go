@@ -102,6 +102,9 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	skills := skill.NewService(skill.NewStore(conn), events)
 	checkpointStore := checkpoint.NewStore(conn)
 	checkpoints := checkpoint.NewService(checkpointStore, artifacts, events)
+	// A completed task automatically checkpoints what it changed, using the file
+	// versions the edit/write tools already recorded (roadmapplan.md §11.1).
+	taskCoord.WithCheckpoints(files, checkpoints)
 
 	app := &App{
 		Sessions:        sessions,

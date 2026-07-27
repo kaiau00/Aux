@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aux-ai/aux-cli/internal/checkpoint"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
+	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/memory"
@@ -17,6 +19,17 @@ import (
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 	"github.com/aux-ai/aux-cli/internal/validation"
 )
+
+// FileLister lists the recorded file versions for a session (history service).
+type FileLister interface {
+	ListBySession(ctx context.Context, sessionID string) ([]history.File, error)
+	ListLatestSessionFiles(ctx context.Context, sessionID string) ([]history.File, error)
+}
+
+// CheckpointCreator captures a checkpoint from a set of file changes.
+type CheckpointCreator interface {
+	Create(ctx context.Context, taskID, parentID, label, revision string, changes []checkpoint.FileChange) (checkpoint.Checkpoint, error)
+}
 
 // ProjectResolver resolves a working directory to a project identity.
 type ProjectResolver interface {
@@ -43,6 +56,8 @@ type Coordinator struct {
 	events      EventSink
 	memories    *memory.Service
 	validations *validation.Service
+	history     FileLister
+	checkpoints CheckpointCreator
 	workdir     string
 
 	mu     sync.Mutex
@@ -65,6 +80,15 @@ func (c *Coordinator) WithMemory(m *memory.Service) *Coordinator {
 // extracted from commands that validated successfully during a task. Optional.
 func (c *Coordinator) WithValidation(v *validation.Service) *Coordinator {
 	c.validations = v
+	return c
+}
+
+// WithCheckpoints wires history + checkpoint capture so a completed task
+// automatically records what it changed (roadmapplan.md §11.1). Both are
+// required for capture; either nil disables it. Optional.
+func (c *Coordinator) WithCheckpoints(files FileLister, checkpoints CheckpointCreator) *Coordinator {
+	c.history = files
+	c.checkpoints = checkpoints
 	return c
 }
 
@@ -171,7 +195,64 @@ func (c *Coordinator) Finish(ctx context.Context, taskID, outcome string) {
 	c.emit(context.Background(), projectID, sessionID, eventstore.TaskCompleted, eventstore.TaskPayload{
 		TaskID: taskID, Status: string(StatusCompleted), Outcome: outcome,
 	})
+	c.captureCheckpoint(context.Background(), taskID, sessionID)
 	c.learnFromTask(context.Background(), taskID, outcome)
+}
+
+// captureCheckpoint records what a completed task changed by snapshotting the
+// session's recorded file versions into a checkpoint (roadmapplan.md §11.1). The
+// before/after content comes from the history the edit/write tools already wrote,
+// so the change set is truthful — never inferred. Best-effort: any failure is
+// swallowed so it never affects task completion.
+func (c *Coordinator) captureCheckpoint(ctx context.Context, taskID, sessionID string) {
+	if c.checkpoints == nil || c.history == nil || sessionID == "" {
+		return
+	}
+	all, err := c.history.ListBySession(ctx, sessionID)
+	if err != nil || len(all) == 0 {
+		return
+	}
+	latest, err := c.history.ListLatestSessionFiles(ctx, sessionID)
+	if err != nil {
+		return
+	}
+
+	// "before" is the initial recorded content per path (what the edit/write
+	// tool saw first); "after" is the latest content. Both come from history,
+	// so the change set is truthful regardless of version-timestamp ties.
+	before := make(map[string]string, len(all))
+	for _, f := range all {
+		if f.Version == history.InitialVersion {
+			before[f.Path] = f.Content
+		}
+	}
+
+	var changes []checkpoint.FileChange
+	for _, f := range latest {
+		b := before[f.Path]
+		if b == f.Content {
+			continue // recorded but net-unchanged
+		}
+		op := checkpoint.OpModify
+		switch {
+		case b == "":
+			op = checkpoint.OpAdd
+		case f.Content == "":
+			op = checkpoint.OpDelete
+		}
+		changes = append(changes, checkpoint.FileChange{
+			Path: f.Path, Before: []byte(b), After: []byte(f.Content), Operation: op,
+		})
+	}
+	if len(changes) == 0 {
+		return
+	}
+
+	rev := ""
+	if c.cached != nil {
+		rev = c.cached.Revision.VCSRevision
+	}
+	_, _ = c.checkpoints.Create(ctx, taskID, "", "task-complete", rev, changes)
 }
 
 // learnFromTask extracts deterministic memory candidates from a completed task
