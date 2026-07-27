@@ -19,6 +19,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/db"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/format"
+	"github.com/aux-ai/aux-cli/internal/govpolicy"
 	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/impact"
 	"github.com/aux-ai/aux-cli/internal/llm/agent"
@@ -58,6 +59,7 @@ type App struct {
 	Impact          *impact.Service
 	Validations     *validation.Service
 	Skills          *skill.Service
+	Policies        *govpolicy.Service
 	Checkpoints     *checkpoint.Service
 	CheckpointStore *checkpoint.Store
 
@@ -100,6 +102,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	pages := contextstore.NewStore(conn)
 	impactSvc := impact.NewService(impact.NewStore(conn))
 	skills := skill.NewService(skill.NewStore(conn), events)
+	policies := govpolicy.NewService(govpolicy.NewStore(conn), events)
 	checkpointStore := checkpoint.NewStore(conn)
 	checkpoints := checkpoint.NewService(checkpointStore, artifacts, events)
 	// A completed task automatically checkpoints what it changed, using the file
@@ -124,6 +127,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Impact:          impactSvc,
 		Validations:     validations,
 		Skills:          skills,
+		Policies:        policies,
 		Checkpoints:     checkpoints,
 		CheckpointStore: checkpointStore,
 		LSPClients:      make(map[string]*lsp.Client),

@@ -74,6 +74,12 @@ type BudgetPayload struct {
 	Reason    string  `json:"reason,omitempty"`
 }
 
+// PolicyPayload accompanies policy.* (governor policy lifecycle) events.
+type PolicyPayload struct {
+	PolicyID string `json:"policyId"`
+	State    string `json:"state,omitempty"`
+}
+
 // ValidationPayload accompanies validation.* events.
 type ValidationPayload struct {
 	ValidationRunID string `json:"validationRunId"`

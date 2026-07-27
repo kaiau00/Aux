@@ -73,6 +73,10 @@ const (
 	BudgetWarning    Type = "budget.warning"
 	BudgetExhausted  Type = "budget.exhausted"
 	GovernorDecision Type = "governor.decision"
+
+	// Governor policy lifecycle.
+	PolicyPromoted   Type = "policy.promoted"
+	PolicyRolledBack Type = "policy.rolled_back"
 )
 
 // Event is one row of the durable log. Payload holds the marshaled typed payload.
