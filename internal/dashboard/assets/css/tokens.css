@@ -1,7 +1,7 @@
 /* Design tokens for the Aux dashboard (roadmapplan.md §13.13).
    Split out of index.html as the first step of the asset structure so the
    warm technical-workbench palette lives in one place. Loaded before the
-   inline component styles, which reference these custom properties. */
+   per-page component styles, which reference these custom properties. */
 :root {
   color-scheme: dark;
   --bg: #080704;
@@ -17,4 +17,33 @@
   --danger: #fb923c;
   --ok: #facc15;
   --shadow: 0 0 30px rgba(245, 158, 11, .16);
+
+  /* Spacing scale (rem), shared across pages instead of ad hoc padding/margin. */
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  /* Typography scale. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: .72rem;
+  --text-sm: .85rem;
+  --text-base: .95rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.35rem;
+}
+
+/* Respect the user's motion preference: every page's decorative animation
+   (pulses, rotations) must be gated behind this, not just present by default
+   (roadmapplan.md §13.16). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
 }

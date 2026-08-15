@@ -189,6 +189,50 @@ func pageCategoryLabel(pageType string) string {
 	}
 }
 
+// ContextPageEntryVM is one page binding for the TUI's expanded context view.
+type ContextPageEntryVM struct {
+	PageType  string `json:"pageType"`
+	StableKey string `json:"stableKey"`
+	State     string `json:"state"`
+	Tokens    int64  `json:"tokens"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// ContextPageListVM groups a call's page bindings by state, for the expanded
+// context view (roadmapplan.md §13.11) that the compact budget summarizes.
+// Grouped by the states that actually exist in contextstore — resident,
+// available, pinned, evicted, faulted — not aspirational states with no
+// backing model.
+type ContextPageListVM struct {
+	Resident  []ContextPageEntryVM `json:"resident"`
+	Available []ContextPageEntryVM `json:"available"`
+	Pinned    []ContextPageEntryVM `json:"pinned"`
+	Evicted   []ContextPageEntryVM `json:"evicted"`
+	Faulted   []ContextPageEntryVM `json:"faulted"`
+}
+
+// BuildContextPageList projects per-call page bindings into the expanded,
+// per-page view grouped by binding state.
+func BuildContextPageList(bindings []contextstore.BoundPage) ContextPageListVM {
+	var vm ContextPageListVM
+	for _, b := range bindings {
+		entry := ContextPageEntryVM{PageType: b.PageType, StableKey: b.StableKey, State: b.State, Tokens: b.TokenCount, Reason: b.Reason}
+		switch b.State {
+		case contextstore.StateResident:
+			vm.Resident = append(vm.Resident, entry)
+		case contextstore.StateAvailable:
+			vm.Available = append(vm.Available, entry)
+		case contextstore.StatePinned:
+			vm.Pinned = append(vm.Pinned, entry)
+		case contextstore.StateEvicted:
+			vm.Evicted = append(vm.Evicted, entry)
+		case contextstore.StateFaulted:
+			vm.Faulted = append(vm.Faulted, entry)
+		}
+	}
+	return vm
+}
+
 // BuildContextBudget projects per-call page bindings into a budget composition
 // (roadmapplan.md §13.11). Only resident pages count toward the used total.
 func BuildContextBudget(bindings []contextstore.BoundPage, limitTokens, savedTokens int64) ContextBudgetVM {

@@ -101,6 +101,33 @@ func (s *ExperimentStore) ListRuns(ctx context.Context, experimentID string) ([]
 	return out, rows.Err()
 }
 
+// ListExperiments returns a project's experiments, most recent first, for
+// history/optimization surfaces such as the dashboard (roadmapplan.md §13.14).
+// Ties in created_at (same millisecond) break on experiment_id, which is
+// itself time-ordered (UUIDv7, see internal/ids), so ordering stays
+// deterministic and creation-order-consistent even for rapid successive
+// experiments.
+func (s *ExperimentStore) ListExperiments(ctx context.Context, projectID string) ([]Experiment, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT experiment_id, project_id, name, hypothesis, status, config_json, created_at
+         FROM experiments WHERE project_id IS ? ORDER BY created_at DESC, experiment_id DESC`, nullable(projectID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Experiment
+	for rows.Next() {
+		var e Experiment
+		var pid sql.NullString
+		if err := rows.Scan(&e.ID, &pid, &e.Name, &e.Hypothesis, &e.Status, &e.ConfigJSON, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.ProjectID = pid.String
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // GetExperiment returns an experiment by id.
 func (s *ExperimentStore) GetExperiment(ctx context.Context, id string) (Experiment, error) {
 	row := s.db.QueryRowContext(ctx,

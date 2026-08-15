@@ -25,7 +25,7 @@ func TestStaticAssetServesTokens(t *testing.T) {
 
 func TestStaticAssetRejectsTraversalAndUnknownTrees(t *testing.T) {
 	server := &Server{}
-	for _, p := range []string{"/css/../server.go", "/etc/passwd", "/assets/index.html", "/css/missing.css"} {
+	for _, p := range []string{"/css/../server.go", "/etc/passwd", "/assets/tasks.html", "/css/missing.css"} {
 		req := httptest.NewRequest(http.MethodGet, p, nil)
 		rec := httptest.NewRecorder()
 		server.handleStaticAsset(rec, req)
@@ -35,13 +35,23 @@ func TestStaticAssetRejectsTraversalAndUnknownTrees(t *testing.T) {
 	}
 }
 
-func TestIndexReferencesSplitTokens(t *testing.T) {
-	// The split is only real if index.html actually loads the tokens stylesheet.
-	data, err := assets.ReadFile("assets/index.html")
-	if err != nil {
-		t.Fatalf("read index.html: %v", err)
-	}
-	if !strings.Contains(string(data), `href="css/tokens.css"`) {
-		t.Fatal("index.html must reference the split css/tokens.css")
+func TestEveryPageReferencesSplitTokens(t *testing.T) {
+	// The split is only real if every top-level page actually loads the
+	// tokens stylesheet (and the shared base/components stylesheets).
+	for _, page := range []string{"tasks.html", "sessions.html"} {
+		data, err := assets.ReadFile("assets/" + page)
+		if err != nil {
+			t.Fatalf("read %s: %v", page, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, `href="css/tokens.css"`) {
+			t.Fatalf("%s must reference the split css/tokens.css", page)
+		}
+		if !strings.Contains(content, `href="css/base.css"`) {
+			t.Fatalf("%s must reference the shared css/base.css", page)
+		}
+		if !strings.Contains(content, `src="js/nav.js"`) {
+			t.Fatalf("%s must load the shared nav.js", page)
+		}
 	}
 }

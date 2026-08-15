@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aux — Sessions</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/sessions.css">
+</head>
+<body>
+  <main class="dashboard">
+    <section class="stats">
+      <div class="stat"><div class="label">Sessions</div><div class="value" id="sessionCount">0</div></div>
+      <div class="stat"><div class="label">Prompt Tokens</div><div class="value" id="promptTokens">0</div></div>
+      <div class="stat"><div class="label">Completion Tokens</div><div class="value" id="completionTokens">0</div></div>
+      <div class="stat"><div class="label">Cost</div><div class="value" id="cost">$0.00</div></div>
+    </section>
+    <section class="panel"><h2>Session Tree</h2><div class="tree" id="tree"></div></section>
+    <section class="panel"><h2>Live Activity</h2><div class="activity" id="activity"></div></section>
+    <section class="panel"><h2>Inspector</h2><div class="inspector" id="inspector"></div></section>
+    <section class="panel"><h2>Event Feed</h2><div class="feed" id="feed"></div></section>
+    <section class="panel"><h2>Logs</h2><div class="feed" id="logs"></div></section>
+  </main>
+  <script src="js/nav.js"></script>
+  <script src="js/sessions.js"></script>
+</body>
+</html>

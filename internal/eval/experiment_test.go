@@ -45,6 +45,38 @@ func TestRunCompilerExperimentPersists(t *testing.T) {
 	}
 }
 
+func TestListExperimentsScopedToProjectMostRecentFirst(t *testing.T) {
+	store := eval.NewExperimentStore(dbtest.New(t))
+	ctx := context.Background()
+
+	if _, _, err := eval.RunCompilerExperiment(ctx, store, "proj-a"); err != nil {
+		t.Fatalf("RunCompilerExperiment proj-a #1: %v", err)
+	}
+	if _, _, err := eval.RunCompilerExperiment(ctx, store, "proj-b"); err != nil {
+		t.Fatalf("RunCompilerExperiment proj-b: %v", err)
+	}
+	expA2, _, err := eval.RunCompilerExperiment(ctx, store, "proj-a")
+	if err != nil {
+		t.Fatalf("RunCompilerExperiment proj-a #2: %v", err)
+	}
+
+	list, err := store.ListExperiments(ctx, "proj-a")
+	if err != nil {
+		t.Fatalf("ListExperiments: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 experiments for proj-a, got %d", len(list))
+	}
+	if list[0].ID != expA2.ID {
+		t.Fatalf("expected most recent experiment first, got %+v", list[0])
+	}
+	for _, e := range list {
+		if e.ProjectID != "proj-a" {
+			t.Fatalf("ListExperiments leaked an experiment from another project: %+v", e)
+		}
+	}
+}
+
 func TestReplayTaskState(t *testing.T) {
 	events := []eventstore.Event{
 		{Type: eventstore.TaskCreated},

@@ -21,6 +21,32 @@ type TaskReader interface {
 	RecentTasks(ctx context.Context, limit int) ([]viewmodel.TaskSummaryVM, error)
 }
 
+// ProjectReader assembles the Project Brain view (roadmapplan.md §13.14 item
+// 4): project identity, effective profile, and related-project graph.
+// Optional; when nil the /api/v1/project endpoint is disabled.
+type ProjectReader interface {
+	ProjectBrainView(ctx context.Context, workdir string) (viewmodel.ProjectBrainVM, error)
+	ResolveProjectID(ctx context.Context, workdir string) (string, error)
+}
+
+// MemoryReader assembles the Memory & skills view (roadmapplan.md §13.14 item
+// 5). Optional; when nil the /api/v1/memory endpoint is disabled.
+type MemoryReader interface {
+	MemoryBrainView(ctx context.Context, projectID string) (viewmodel.MemoryBrainVM, error)
+}
+
+// ImpactReader assembles the Impact graph view (roadmapplan.md §13.14 item 6).
+// Optional; when nil the /api/v1/impact endpoint is disabled.
+type ImpactReader interface {
+	ImpactGraphView(ctx context.Context, projectID string) (viewmodel.ImpactGraphVM, error)
+}
+
+// OptimizationReader assembles the Optimization view (roadmapplan.md §13.14
+// item 7). Optional; when nil the /api/v1/optimization endpoint is disabled.
+type OptimizationReader interface {
+	OptimizationView(ctx context.Context, projectID string) (viewmodel.OptimizationVM, error)
+}
+
 type RedactionMode string
 
 const (
@@ -39,11 +65,18 @@ type Options struct {
 }
 
 type Services struct {
-	Sessions session.Service
-	Messages message.Service
-	History  history.Service
-	Agent    agent.Service
-	Tasks    TaskReader
+	Sessions     session.Service
+	Messages     message.Service
+	History      history.Service
+	Agent        agent.Service
+	Tasks        TaskReader
+	Project      ProjectReader
+	Memory       MemoryReader
+	Impact       ImpactReader
+	Optimization OptimizationReader
+	// Workdir is the working directory the Project/Memory/Impact/Optimization
+	// views resolve their current project from.
+	Workdir string
 }
 
 type DashboardEvent struct {

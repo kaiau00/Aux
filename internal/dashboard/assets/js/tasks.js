@@ -139,5 +139,6 @@
   function card(title, body) { return '<div class="card"><h2>' + title + "</h2>" + body + "</div>"; }
   function kv(k, v) { return "<span><b>" + esc(k) + ":</b> " + v + "</span>"; }
 
+  if (window.AuxNav) window.AuxNav.mount("Active task workspace");
   loadList();
 })();

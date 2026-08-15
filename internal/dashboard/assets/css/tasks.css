@@ -1,35 +1,16 @@
-/* Active-task workspace (roadmapplan.md §13.12/§13.14). Warm technical
-   workbench: neutral surfaces, restrained amber, distinct semantic colors.
-   Design tokens live in css/tokens.css. */
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  min-height: 100vh;
-  color: var(--text);
-  background: linear-gradient(135deg, #080704, #151006 55%, #090704);
-  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-.topbar {
-  display: flex;
-  align-items: baseline;
-  gap: .75rem;
-  padding: .75rem 1.25rem;
-  border-bottom: 1px solid var(--line);
-}
-.brand { color: var(--amber-2); font-weight: 700; letter-spacing: .04em; }
-.subtitle { color: var(--muted); font-size: .85rem; }
-
+/* Active-task workspace, page-specific layout only (roadmapplan.md
+   §13.12/§13.14). Shared chrome lives in base.css, reusable primitives
+   (card/badge/state/kv/row/bar) in components.css. */
 .workspace {
   display: grid;
   grid-template-columns: minmax(220px, 320px) 1fr;
   gap: 1px;
   background: var(--line);
-  min-height: calc(100vh - 3rem);
 }
+@media (max-width: 900px) { .workspace { grid-template-columns: minmax(200px, 260px) 1fr; } }
 @media (max-width: 720px) { .workspace { grid-template-columns: 1fr; } }
 
-.task-list, .task-detail { background: var(--panel-2); padding: 1rem; overflow-y: auto; }
-.empty { color: var(--muted); font-style: italic; }
+.task-list, .task-detail { background: var(--panel-2); padding: var(--space-4); overflow-y: auto; }
 
 .task-row {
   display: flex; flex-direction: column; gap: .15rem;
@@ -39,25 +20,4 @@ body {
 .task-row:hover { border-color: var(--line); background: var(--panel); }
 .task-row.selected { border-color: var(--line-strong); background: var(--panel); }
 .task-row .objective { color: var(--text); }
-.task-row .meta { color: var(--muted); font-size: .8rem; }
-
-.card { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; margin-bottom: 1rem; background: var(--panel); }
-.card h2 { margin: 0 0 .5rem; font-size: .95rem; color: var(--amber-2); }
-.kv { display: flex; flex-wrap: wrap; gap: .35rem 1.25rem; color: var(--muted); font-size: .85rem; }
-.kv b { color: var(--text); font-weight: 600; }
-
-.row { display: flex; gap: .5rem; align-items: center; padding: .15rem 0; }
-.badge { font-size: .72rem; padding: .05rem .45rem; border-radius: 999px; border: 1px solid var(--line); }
-
-/* Distinct semantic states — success reserved for validated evidence only. */
-.state-validated, .state-completed { color: var(--ok); border-color: var(--ok); }
-.state-active { color: var(--amber-2); border-color: var(--amber-2); }
-.state-failed, .state-blocked { color: var(--danger); border-color: var(--danger); }
-.state-unverified, .state-waiting, .state-queued, .state-stale { color: var(--muted); }
-
-.op-add { color: var(--ok); }
-.op-delete { color: var(--danger); }
-.op-modify, .op-rename { color: var(--text); }
-
-.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
-.bar > span { display: block; height: 100%; background: var(--amber); }
+.task-row .meta { color: var(--muted); font-size: var(--text-sm); }
