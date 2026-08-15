@@ -69,12 +69,21 @@ type ContextPaneCmp struct {
 	validation viewmodel.ValidationSummaryVM
 	changes    viewmodel.ChangeSummaryVM
 	hasTask    bool
+	// taskID is the current session's latest task id, used so the x/u/c
+	// cross-off controls persist a real exclusion for the task's next prompt
+	// compile (roadmapplan.md §13.11) instead of only repainting a checkbox.
+	taskID string
 
 	// budget is the context signature composition (roadmapplan.md §13.11),
 	// projected from the latest model call's page bindings — the same manifest
 	// the model received. Empty (and hidden) until demand paging records
 	// bindings, leaving the file list below as the compatibility adapter.
 	budget viewmodel.ContextBudgetVM
+
+	// pageList is the same call's bindings grouped by state, backing the
+	// expanded context view (roadmapplan.md §13.11) toggled by the Expand key.
+	pageList        viewmodel.ContextPageListVM
+	expandedContext bool
 
 	// editorFocused suppresses pane hotkeys while the editor textarea is
 	// active so the user can type x/u/c/j/k without triggering context
@@ -90,6 +99,7 @@ type ContextPaneKeys struct {
 	CrossOff key.Binding
 	Uncross  key.Binding
 	Clear    key.Binding
+	Expand   key.Binding
 }
 
 var defaultContextPaneKeys = ContextPaneKeys{
@@ -112,6 +122,10 @@ var defaultContextPaneKeys = ContextPaneKeys{
 	Clear: key.NewBinding(
 		key.WithKeys("c"),
 		key.WithHelp("c", "clear crossed"),
+	),
+	Expand: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "expand context"),
 	),
 }
 
@@ -188,13 +202,17 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleCross(false)
 		case key.Matches(msg, m.keys.Clear):
 			m.clearCrossed()
+		case key.Matches(msg, m.keys.Expand):
+			m.mu.Lock()
+			m.expandedContext = !m.expandedContext
+			m.mu.Unlock()
 		}
 	}
 	return m, nil
 }
 
 func (m *ContextPaneCmp) BindingKeys() []key.Binding {
-	return []key.Binding{m.keys.Up, m.keys.Down, m.keys.CrossOff, m.keys.Uncross, m.keys.Clear}
+	return []key.Binding{m.keys.Up, m.keys.Down, m.keys.CrossOff, m.keys.Uncross, m.keys.Clear, m.keys.Expand}
 }
 
 // SetEditorFocused toggles whether the editor textarea currently has focus.
@@ -230,18 +248,37 @@ func (m *ContextPaneCmp) moveSelection(delta int) {
 	}
 }
 
+// toggleCross marks the selected entry crossed off (or not) and persists a
+// real exclusion override for the task's next prompt compile (roadmapplan.md
+// §13.11), so x/u change what is actually sent to the model rather than only
+// repainting a checkbox.
 func (m *ContextPaneCmp) toggleCross(crossed bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.selected < 0 || m.selected >= len(m.entries) {
+		m.mu.Unlock()
 		return
 	}
 	m.entries[m.selected].CrossedOff = crossed
+	toolCallID := m.entries[m.selected].ToolCallID
+	taskID := m.taskID
+	m.mu.Unlock()
+
+	if m.app == nil || m.app.Pages == nil || taskID == "" || toolCallID == "" {
+		return
+	}
+	ctx := context.Background()
+	if crossed {
+		_ = m.app.Pages.Exclude(ctx, taskID, toolCallID)
+	} else {
+		_ = m.app.Pages.Include(ctx, taskID, toolCallID)
+	}
 }
 
+// clearCrossed drops every crossed-off entry from the display list and clears
+// every exclusion override recorded for the task, so the next compile again
+// includes everything.
 func (m *ContextPaneCmp) clearCrossed() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	kept := m.entries[:0]
 	for _, e := range m.entries {
 		if !e.CrossedOff {
@@ -252,6 +289,13 @@ func (m *ContextPaneCmp) clearCrossed() {
 	if m.selected >= len(m.entries) {
 		m.selected = max(0, len(m.entries)-1)
 	}
+	taskID := m.taskID
+	m.mu.Unlock()
+
+	if m.app == nil || m.app.Pages == nil || taskID == "" {
+		return
+	}
+	_ = m.app.Pages.ClearExclusions(context.Background(), taskID)
 }
 
 // absorbMessage scans a message for view tool results and appends one
@@ -488,12 +532,15 @@ func (m *ContextPaneCmp) refreshWorkbench() {
 	validationVM := m.buildValidation(ctx, latest.ID)
 	changesVM := m.buildChanges(ctx, latest.ID)
 	budgetVM := m.buildBudget(ctx, latest.ID)
+	pageListVM := m.buildPageList(ctx, latest.ID)
 
 	m.mu.Lock()
 	m.validation = validationVM
 	m.changes = changesVM
 	m.budget = budgetVM
+	m.pageList = pageListVM
 	m.hasTask = true
+	m.taskID = latest.ID
 	m.mu.Unlock()
 }
 
@@ -515,6 +562,24 @@ func (m *ContextPaneCmp) buildBudget(ctx context.Context, taskID string) viewmod
 		return viewmodel.ContextBudgetVM{}
 	}
 	return viewmodel.BuildContextBudget(bindings, contextLimitTokens(), m.savedTokens(ctx))
+}
+
+// buildPageList projects the same call's bindings buildBudget reads into the
+// expanded, per-page view grouped by binding state (roadmapplan.md §13.11).
+func (m *ContextPaneCmp) buildPageList(ctx context.Context, taskID string) viewmodel.ContextPageListVM {
+	if m.app.Pages == nil || m.app.Cost == nil {
+		return viewmodel.ContextPageListVM{}
+	}
+	calls, err := m.app.Cost.ListCallsByTask(ctx, taskID)
+	if err != nil || len(calls) == 0 {
+		return viewmodel.ContextPageListVM{}
+	}
+	last := calls[len(calls)-1]
+	bindings, err := m.app.Pages.BindingsForCall(ctx, last.ID)
+	if err != nil || len(bindings) == 0 {
+		return viewmodel.ContextPageListVM{}
+	}
+	return viewmodel.BuildContextPageList(bindings)
 }
 
 // contextLimitTokens returns the configured coder model's context window, or 0
@@ -551,10 +616,19 @@ func (m *ContextPaneCmp) savedTokens(ctx context.Context) int64 {
 
 // budgetView renders the context budget, or "" when there are no page bindings
 // yet (paging off), so the file list below remains the compatibility adapter.
+// The Expand key toggles between the compact summary and the per-page,
+// grouped-by-state expanded view (roadmapplan.md §13.11).
 func (m *ContextPaneCmp) budgetView() string {
 	m.mu.Lock()
 	vm := m.budget
+	pages := m.pageList
+	expanded := m.expandedContext
 	m.mu.Unlock()
+	if expanded {
+		if out := contextbudget.RenderExpanded(pages, m.width); out != "" {
+			return out
+		}
+	}
 	return contextbudget.Render(vm, m.width)
 }
 

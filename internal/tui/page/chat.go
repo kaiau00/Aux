@@ -19,21 +19,31 @@ import (
 
 var ChatPage PageID = "chat"
 
+// narrowWidthThreshold is the terminal width below which the split layout
+// drops the context panel to a single conversation column (roadmapplan.md
+// §13.10/§13.15). Below this width the panel is only reachable via the
+// context drawer, never fully lost.
+const narrowWidthThreshold = 80
+
 type chatPage struct {
 	app                  *app.App
 	editor               layout.Container
 	messages             layout.Container
 	contextPane          *chat.ContextPaneCmp
+	contextPaneContainer layout.Container
 	layout               layout.SplitPaneLayout
 	session              session.Session
 	completionDialog     dialog.CompletionDialog
 	showCompletionDialog bool
+	showContextDrawer    bool
+	width, height        int
 }
 
 type ChatKeyMap struct {
 	ShowCompletionDialog key.Binding
 	NewSession           key.Binding
 	Cancel               key.Binding
+	ToggleContextDrawer  key.Binding
 }
 
 var keyMap = ChatKeyMap{
@@ -49,6 +59,10 @@ var keyMap = ChatKeyMap{
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "cancel"),
 	),
+	ToggleContextDrawer: key.NewBinding(
+		key.WithKeys("ctrl+g"),
+		key.WithHelp("ctrl+g", "context drawer"),
+	),
 }
 
 func (p *chatPage) Init() tea.Cmd {
@@ -63,6 +77,7 @@ func (p *chatPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		p.width, p.height = msg.Width, msg.Height
 		cmd := p.layout.SetSize(msg.Width, msg.Height)
 		cmds = append(cmds, cmd)
 	case dialog.CompletionDialogCloseMsg:
@@ -112,6 +127,13 @@ func (p *chatPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p.app.CoderAgent.Cancel(p.session.ID)
 				return p, nil
 			}
+			if p.showContextDrawer {
+				p.showContextDrawer = false
+				return p, nil
+			}
+		case key.Matches(msg, keyMap.ToggleContextDrawer):
+			p.showContextDrawer = !p.showContextDrawer
+			return p, nil
 		}
 	}
 	if p.showCompletionDialog {
@@ -186,6 +208,30 @@ func (p *chatPage) View() string {
 		)
 	}
 
+	// Below narrowWidthThreshold the split layout drops the context panel
+	// entirely (roadmapplan.md §13.10); the drawer is what makes it reachable
+	// again instead of simply being lost (§13.15).
+	if p.showContextDrawer && p.contextPaneContainer != nil && p.width > 0 {
+		const preferredDrawerWidth = 60
+		const minUsableDrawerWidth = 20
+		drawerWidth := p.width - 4
+		if drawerWidth > preferredDrawerWidth {
+			drawerWidth = preferredDrawerWidth
+		}
+		if drawerWidth < minUsableDrawerWidth {
+			drawerWidth = p.width
+		}
+		p.contextPaneContainer.SetSize(drawerWidth, p.height)
+		overlay := p.contextPaneContainer.View()
+		layoutView = layout.PlaceOverlay(
+			p.width-lipgloss.Width(overlay),
+			0,
+			overlay,
+			layoutView,
+			true,
+		)
+	}
+
 	return layoutView
 }
 
@@ -215,18 +261,20 @@ func NewChatPage(app *app.App) tea.Model {
 		layout.WithPadding(1, 1, 1, 1),
 	)
 	return &chatPage{
-		app:              app,
-		editor:           editorContainer,
-		messages:         messagesContainer,
-		contextPane:      contextPane,
-		completionDialog: completionDialog,
+		app:                  app,
+		editor:               editorContainer,
+		messages:             messagesContainer,
+		contextPane:          contextPane,
+		contextPaneContainer: contextPaneContainer,
+		completionDialog:     completionDialog,
 		layout: layout.NewSplitPane(
 			layout.WithLeftPanel(messagesContainer),
 			layout.WithRightPanel(contextPaneContainer),
 			layout.WithBottomPanel(editorContainer),
 			// Narrow terminals drop to a single conversation column so core task
-			// operation stays usable at every breakpoint (§13.10).
-			layout.WithCollapseRightBelow(80),
+			// operation stays usable at every breakpoint (§13.10); the context
+			// drawer (ctrl+g) is what makes the dropped panel reachable again.
+			layout.WithCollapseRightBelow(narrowWidthThreshold),
 		),
 	}
 }

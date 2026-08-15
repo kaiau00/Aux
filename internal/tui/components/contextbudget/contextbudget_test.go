@@ -24,6 +24,51 @@ func sampleBudget() viewmodel.ContextBudgetVM {
 	}
 }
 
+func TestRenderExpandedEmptyHidden(t *testing.T) {
+	if got := RenderExpanded(viewmodel.ContextPageListVM{}, 60); got != "" {
+		t.Fatalf("expected empty expanded view to render nothing, got %q", got)
+	}
+	if got := RenderExpanded(viewmodel.ContextPageListVM{Resident: []viewmodel.ContextPageEntryVM{{StableKey: "x"}}}, 0); got != "" {
+		t.Fatalf("expected zero width to render nothing, got %q", got)
+	}
+}
+
+func TestRenderExpandedGroupsAndOrder(t *testing.T) {
+	vm := viewmodel.ContextPageListVM{
+		Resident: []viewmodel.ContextPageEntryVM{{StableKey: "file:/a.go", Tokens: 100}},
+		Pinned:   []viewmodel.ContextPageEntryVM{{StableKey: "task_spec:1", Tokens: 20}},
+		Evicted:  []viewmodel.ContextPageEntryVM{{StableKey: "file:/b.go", Tokens: 10, Reason: "excluded by user"}},
+	}
+	out := RenderExpanded(vm, 60)
+	for _, want := range []string{"Pinned (1)", "Resident (1)", "Evicted (1)", "file:/a.go", "task_spec:1", "excluded by user"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expanded view missing %q:\n%s", want, out)
+		}
+	}
+	// Pinned group must render before Resident (priority order).
+	if strings.Index(out, "Pinned") > strings.Index(out, "Resident") {
+		t.Fatalf("expected Pinned group before Resident:\n%s", out)
+	}
+	// Groups with no entries (Available, Faulted) must not appear.
+	for _, absent := range []string{"Available (", "Faulted ("} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("expanded view should omit empty groups, found %q:\n%s", absent, out)
+		}
+	}
+}
+
+func TestRenderExpandedFitsWidth(t *testing.T) {
+	vm := viewmodel.ContextPageListVM{
+		Resident: []viewmodel.ContextPageEntryVM{{StableKey: "a/very/long/path/that/should/be/truncated/to/fit.go", Tokens: 12345}},
+	}
+	out := RenderExpanded(vm, 30)
+	for _, line := range strings.Split(out, "\n") {
+		if lipgloss.Width(line) > 30 {
+			t.Fatalf("line exceeds width 30: %q (%d)", line, lipgloss.Width(line))
+		}
+	}
+}
+
 func TestFormatTokens(t *testing.T) {
 	cases := map[int64]string{
 		0:         "0",

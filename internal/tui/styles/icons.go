@@ -1,14 +1,48 @@
 package styles
 
-const (
-	AuxIcon string = "⌬"
+import (
+	"os"
+	"strings"
+)
 
-	CheckIcon    string = "✓"
-	ErrorIcon    string = "✖"
-	WarningIcon  string = "⚠"
-	InfoIcon     string = ""
-	HintIcon     string = "i"
-	SpinnerIcon  string = "..."
-	LoadingIcon  string = "⟳"
-	DocumentIcon string = "🖼"
+// SupportsUnicode reports whether the terminal is expected to render
+// non-ASCII glyphs reliably (roadmapplan.md §13.3/§13.18 terminal
+// fallbacks). Most terminals handle Unicode fine even with no locale
+// configured, so the only cases treated as ASCII-only are an explicit
+// override or the classic POSIX "C"/"POSIX" locale — the traditional signal
+// for "ASCII only" — rather than defaulting to degraded glyphs whenever
+// LANG happens to be unset.
+func SupportsUnicode() bool {
+	if v := os.Getenv("AUX_ASCII_ICONS"); v == "1" || strings.EqualFold(v, "true") {
+		return false
+	}
+	for _, env := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		v := os.Getenv(env)
+		if v == "" {
+			continue
+		}
+		upper := strings.ToUpper(v)
+		return upper != "C" && upper != "POSIX" && !strings.HasPrefix(upper, "C.")
+	}
+	return true
+}
+
+func pickIcon(unicode, ascii string) string {
+	if SupportsUnicode() {
+		return unicode
+	}
+	return ascii
+}
+
+var (
+	AuxIcon = pickIcon("⌬", "*")
+
+	CheckIcon    = pickIcon("✓", "v")
+	ErrorIcon    = pickIcon("✖", "x")
+	WarningIcon  = pickIcon("⚠", "!")
+	InfoIcon     = pickIcon("ℹ", "i")
+	HintIcon     = "i"   // already ASCII
+	SpinnerIcon  = "..." // already ASCII
+	LoadingIcon  = pickIcon("⟳", "~")
+	DocumentIcon = pickIcon("▤", "#")
 )

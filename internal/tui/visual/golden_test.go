@@ -20,7 +20,10 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/components/contextbudget"
 	"github.com/aux-ai/aux-cli/internal/tui/components/core"
 	"github.com/aux-ai/aux-cli/internal/tui/components/workbench"
+	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -137,6 +140,33 @@ func fixtures() map[string]fixture {
 			header:     viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "completed", State: viewmodel.StateCompleted, ContextLimit: 64000},
 			validation: viewmodel.BuildValidationSummary([]viewmodel.CriterionInput{{Description: "tests pass"}, {Description: "builds"}}),
 		},
+		"completed-validated": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "completed", State: viewmodel.StateCompleted, ContextLimit: 64000},
+			validation: viewmodel.ValidationSummaryVM{
+				Criteria: []viewmodel.CriterionVM{
+					{Description: "tests pass", State: viewmodel.StateValidated},
+					{Description: "builds", State: viewmodel.StateValidated},
+				},
+				Overall: viewmodel.StateValidated, Validated: 2,
+			},
+		},
+		"permission-waiting": {
+			header: viewmodel.TaskHeaderVM{
+				Project: "aux-cli", Branch: "feat/x", Objective: "run the migration script",
+				Stage: "waiting for permission", State: viewmodel.StateWaiting, Model: "Opus",
+				ContextUsed: 8000, ContextLimit: 64000,
+			},
+			activity: []viewmodel.ActivityGroupVM{
+				{Kind: viewmodel.ActivityWaiting, State: viewmodel.StateWaiting, Count: 1},
+			},
+		},
+		"cancelled": {
+			header: viewmodel.TaskHeaderVM{
+				Project: "aux-cli", Objective: "refactor the parser",
+				Stage: "cancelled", State: viewmodel.StateCancelled, ContextUsed: 15000, ContextLimit: 64000, Cost: 0.22,
+			},
+			validation: viewmodel.BuildValidationSummary([]viewmodel.CriterionInput{{Description: "tests pass"}}),
+		},
 	}
 }
 
@@ -168,6 +198,64 @@ func TestGoldenSnapshots(t *testing.T) {
 				if len([]rune(line)) > w {
 					t.Fatalf("%s@%s: line exceeds width %d: %q", name, wname, w, line)
 				}
+			}
+		}
+	}
+}
+
+// themeSample is a representative, non-exhaustive subset of registered themes
+// (roadmapplan.md §13.19). The golden files themselves are theme-independent
+// (plain() strips ANSI/color, and layout does not vary by theme), so this
+// does not re-run the golden diff per theme — that would just duplicate
+// identical files with no diagnostic value. Instead it proves every sampled
+// theme actually renders every fixture without panicking and actually
+// applies color (catching a theme whose color application is broken or a
+// fixture that crashes under a specific palette).
+var themeSample = []string{"aux", "catppuccin", "dracula", "tokyonight"}
+
+func TestFixturesRenderAcrossThemes(t *testing.T) {
+	// This test's whole point is to check that color is actually applied, but
+	// lipgloss correctly detects a non-terminal test run and disables color
+	// output by default — so force a color profile for the duration of this
+	// test, restoring it afterward, rather than asserting against an
+	// environment-dependent default.
+	originalProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(originalProfile) })
+
+	original := theme.CurrentThemeName()
+	t.Cleanup(func() {
+		if original != "" {
+			_ = theme.SetTheme(original)
+		}
+	})
+
+	fx := fixtures()
+	plainBaseline := make(map[string]string, len(fx))
+	for fname, f := range fx {
+		plainBaseline[fname] = plain(core.RenderTaskHeader(f.header, 100))
+	}
+
+	for _, name := range themeSample {
+		if theme.GetTheme(name) == nil {
+			t.Fatalf("theme sample references unregistered theme %q", name)
+		}
+		if err := theme.SetTheme(name); err != nil {
+			t.Fatalf("SetTheme(%q): %v", name, err)
+		}
+		for fname, f := range fx {
+			raw := core.RenderTaskHeader(f.header, 100)
+			if raw == "" {
+				t.Fatalf("theme %q fixture %q: header rendered empty", name, fname)
+			}
+			if !ansiRE.MatchString(raw) {
+				t.Fatalf("theme %q fixture %q: header carries no color codes; color application may be broken", name, fname)
+			}
+			// The plain (stripped) content must match the theme-independent
+			// baseline — proving color is the only thing that varies by
+			// theme, not layout or content.
+			if plain(raw) != plainBaseline[fname] {
+				t.Fatalf("theme %q fixture %q: plain content changed under this theme, want layout/content independent of theme", name, fname)
 			}
 		}
 	}

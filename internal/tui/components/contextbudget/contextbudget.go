@@ -123,6 +123,68 @@ func categoryRow(c viewmodel.ContextCategoryVM, total int64, width int) string {
 	return label + strings.Repeat(" ", pad) + value
 }
 
+// expandedGroups pairs a state's label with its entries, in display order.
+func expandedGroups(vm viewmodel.ContextPageListVM) []struct {
+	label   string
+	entries []viewmodel.ContextPageEntryVM
+} {
+	return []struct {
+		label   string
+		entries []viewmodel.ContextPageEntryVM
+	}{
+		{"Pinned", vm.Pinned},
+		{"Resident", vm.Resident},
+		{"Available", vm.Available},
+		{"Evicted", vm.Evicted},
+		{"Faulted", vm.Faulted},
+	}
+}
+
+// RenderExpanded draws the per-page context view grouped by binding state —
+// the detail behind the compact Render summary (roadmapplan.md §13.11).
+// Returns "" when there is nothing to show, so the caller can fall back to
+// the compact view.
+func RenderExpanded(vm viewmodel.ContextPageListVM, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	groups := expandedGroups(vm)
+	empty := true
+	for _, g := range groups {
+		if len(g.entries) > 0 {
+			empty = false
+			break
+		}
+	}
+	if empty {
+		return ""
+	}
+
+	t := theme.CurrentTheme()
+	var rows []string
+	for _, g := range groups {
+		if len(g.entries) == 0 {
+			continue
+		}
+		rows = append(rows, lipgloss.NewStyle().Width(width).Foreground(t.Primary()).Bold(true).
+			Render(fmt.Sprintf(" %s (%d)", g.label, len(g.entries))))
+		for _, e := range g.entries {
+			rows = append(rows, lipgloss.NewStyle().Width(width).Foreground(t.Text()).
+				Render("  "+categoryRow(viewmodel.ContextCategoryVM{Label: pageEntryLabel(e), Tokens: e.Tokens}, 0, width-2)))
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// pageEntryLabel shows the reason alongside the stable key when present
+// (e.g. why a page was evicted), so the expanded view explains itself.
+func pageEntryLabel(e viewmodel.ContextPageEntryVM) string {
+	if e.Reason == "" {
+		return e.StableKey
+	}
+	return e.StableKey + " — " + e.Reason
+}
+
 func truncate(s string, max int) string {
 	if max <= 0 {
 		return ""
