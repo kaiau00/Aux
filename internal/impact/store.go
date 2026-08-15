@@ -141,6 +141,59 @@ func (s *Store) NodeName(ctx context.Context, nodeID string) (string, string, er
 	return nodeType, key, nil
 }
 
+// ListNodes returns up to limit nodes for a project, most recently touched
+// first (rowid order), for graph-browsing surfaces such as the dashboard's
+// impact view (roadmapplan.md §13.14). limit <= 0 falls back to 200.
+func (s *Store) ListNodes(ctx context.Context, projectID string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, project_id, node_type, stable_key, display_name, source_revision, metadata_json
+         FROM graph_nodes WHERE project_id IS ? ORDER BY rowid DESC LIMIT ?`, nullable(projectID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		var n Node
+		var projID sql.NullString
+		if err := rows.Scan(&n.ID, &projID, &n.Type, &n.StableKey, &n.DisplayName, &n.SourceRevision, &n.MetadataJSON); err != nil {
+			return nil, err
+		}
+		n.ProjectID = projID.String
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// ListEdges returns up to limit edges for a project, most recently touched
+// first. limit <= 0 falls back to 400.
+func (s *Store) ListEdges(ctx context.Context, projectID string, limit int) ([]Edge, error) {
+	if limit <= 0 {
+		limit = 400
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT edge_id, project_id, from_node_id, to_node_id, edge_type, weight, source, source_revision
+         FROM graph_edges WHERE project_id IS ? ORDER BY rowid DESC LIMIT ?`, nullable(projectID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Edge
+	for rows.Next() {
+		var e Edge
+		var projID sql.NullString
+		if err := rows.Scan(&e.ID, &projID, &e.FromNodeID, &e.ToNodeID, &e.Type, &e.Weight, &e.Source, &e.SourceRevision); err != nil {
+			return nil, err
+		}
+		e.ProjectID = projID.String
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // CountNodes returns how many nodes a project has (0 => graph not built).
 func (s *Store) CountNodes(ctx context.Context, projectID string) (int, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM graph_nodes WHERE project_id IS ?`, nullable(projectID))

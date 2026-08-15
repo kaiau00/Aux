@@ -20,6 +20,7 @@ type (
 	turnIDContextKey          string
 	modelCallIDContextKey     string
 	taskIDContextKey          string
+	parentTaskIDContextKey    string
 	projectIDContextKey       string
 	toolExecutionIDContextKey string
 )
@@ -28,11 +29,15 @@ const (
 	ToolResponseTypeText  toolResponseType = "text"
 	ToolResponseTypeImage toolResponseType = "image"
 
-	SessionIDContextKey       sessionIDContextKey       = "session_id"
-	MessageIDContextKey       messageIDContextKey       = "message_id"
-	TurnIDContextKey          turnIDContextKey          = "turn_id"
-	ModelCallIDContextKey     modelCallIDContextKey     = "model_call_id"
-	TaskIDContextKey          taskIDContextKey          = "task_id"
+	SessionIDContextKey   sessionIDContextKey   = "session_id"
+	MessageIDContextKey   messageIDContextKey   = "message_id"
+	TurnIDContextKey      turnIDContextKey      = "turn_id"
+	ModelCallIDContextKey modelCallIDContextKey = "model_call_id"
+	TaskIDContextKey      taskIDContextKey      = "task_id"
+	// ParentTaskIDContextKey carries the task id a subagent's own task should be
+	// linked under (roadmapplan.md §11.3). Set by the agent tool before spawning
+	// a subagent; read by task.Coordinator.Begin when present.
+	ParentTaskIDContextKey    parentTaskIDContextKey    = "parent_task_id"
 	ProjectIDContextKey       projectIDContextKey       = "project_id"
 	ToolExecutionIDContextKey toolExecutionIDContextKey = "tool_execution_id"
 )

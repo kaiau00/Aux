@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/aux-ai/aux-cli/internal/history"
+	"github.com/aux-ai/aux-cli/internal/hooks"
+	"github.com/aux-ai/aux-cli/internal/impact"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/lsp"
 	"github.com/aux-ai/aux-cli/internal/permission"
@@ -14,6 +16,8 @@ func CoderAgentTools(
 	permissions permission.Service,
 	history history.Service,
 	lspClients map[string]*lsp.Client,
+	hookRegistry *hooks.Registry,
+	impactSvc *impact.Service,
 ) []tools.BaseTool {
 	ctx := context.Background()
 	otherTools := GetMcpTools(ctx, permissions)
@@ -32,7 +36,7 @@ func CoderAgentTools(
 			tools.NewViewTool(lspClients),
 			tools.NewPatchTool(lspClients, permissions, history),
 			tools.NewWriteTool(lspClients, permissions, history),
-			NewAgentTool(deps, lspClients),
+			NewAgentTool(deps, hookRegistry, permissions, impactSvc, lspClients),
 		}, otherTools...,
 	)
 }

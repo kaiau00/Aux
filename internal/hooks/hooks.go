@@ -19,17 +19,29 @@ const (
 	ToolPre            Point = "tool.pre"
 	ToolPost           Point = "tool.post"
 	ValidationComplete Point = "validation.complete"
+	// SubtaskBegin/SubtaskEnd bracket one subagent's run within a parent task
+	// (roadmapplan.md §11.3). They are distinct from TaskBegin/TaskEnd — which
+	// still fire once for the subagent's own task record — so a handler can
+	// react specifically to subagent lifecycle (e.g. per-subtask checkpointing)
+	// without matching on ParentTaskID being non-empty in every TaskBegin/TaskEnd.
+	SubtaskBegin Point = "subtask.begin"
+	SubtaskEnd   Point = "subtask.end"
 )
 
 // Event is dispatched to handlers at a lifecycle point. Fields are best-effort
 // context; unused fields are empty.
 type Event struct {
-	Point     Point
-	TaskID    string
-	SessionID string
-	Tool      string
-	Outcome   string
-	Data      map[string]string
+	Point Point
+	// TaskID is the subject of the event: the task itself for TaskBegin/TaskEnd,
+	// or the subagent's own task for SubtaskBegin/SubtaskEnd.
+	TaskID string
+	// ParentTaskID is set on SubtaskBegin/SubtaskEnd to the task that spawned
+	// the subagent.
+	ParentTaskID string
+	SessionID    string
+	Tool         string
+	Outcome      string
+	Data         map[string]string
 }
 
 // Handler reacts to a lifecycle event. Returning an error from a pre-point

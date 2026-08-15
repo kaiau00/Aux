@@ -8,6 +8,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/db/dbtest"
 	"github.com/aux-ai/aux-cli/internal/ids"
+	"github.com/aux-ai/aux-cli/internal/task"
 )
 
 func TestStartAndFinishCallRoundTrip(t *testing.T) {
@@ -191,6 +192,61 @@ func TestTaskTotals(t *testing.T) {
 	}
 	if totals.InputTokens != 7 || !almostEqual(totals.Cost, 0.7) {
 		t.Fatalf("task totals wrong: %+v", totals)
+	}
+}
+
+func TestTaskTotalsRollsUpSubagentTasks(t *testing.T) {
+	conn := dbtest.New(t)
+	svc := cost.NewService(conn)
+	taskStore := task.NewStore(conn)
+	ctx := context.Background()
+
+	parentID, childID, grandchildID := "parent-task", "child-task", "grandchild-task"
+	if err := taskStore.CreateTask(ctx, task.Task{ID: parentID, SessionID: "s", Objective: "o", Status: task.StatusRunning, CreatedAt: 1}); err != nil {
+		t.Fatalf("CreateTask parent: %v", err)
+	}
+	if err := taskStore.CreateTask(ctx, task.Task{ID: childID, SessionID: "s", Objective: "o", Status: task.StatusRunning, CreatedAt: 1, ParentTaskID: parentID}); err != nil {
+		t.Fatalf("CreateTask child: %v", err)
+	}
+	if err := taskStore.CreateTask(ctx, task.Task{ID: grandchildID, SessionID: "s", Objective: "o", Status: task.StatusRunning, CreatedAt: 1, ParentTaskID: childID}); err != nil {
+		t.Fatalf("CreateTask grandchild: %v", err)
+	}
+	// An unrelated top-level task must never be counted.
+	if err := taskStore.CreateTask(ctx, task.Task{ID: "unrelated-task", SessionID: "s", Objective: "o", Status: task.StatusRunning, CreatedAt: 1}); err != nil {
+		t.Fatalf("CreateTask unrelated: %v", err)
+	}
+
+	finishCall := func(id, taskID string, inputTokens int64, estCost float64) {
+		t.Helper()
+		if _, err := svc.StartCall(ctx, cost.ModelCall{ID: id, SessionID: "s", TaskID: taskID, Status: cost.CallStarted, StartedAt: 1}); err != nil {
+			t.Fatalf("StartCall %s: %v", id, err)
+		}
+		if err := svc.FinishCall(ctx, cost.ModelCall{
+			ID: id, Status: cost.CallCompleted, CostState: cost.CostKnown,
+			FinishedAt: 2, InputTokens: inputTokens, EstimatedCost: estCost,
+		}); err != nil {
+			t.Fatalf("FinishCall %s: %v", id, err)
+		}
+	}
+	finishCall(ids.New(), parentID, 10, 1.0)
+	finishCall(ids.New(), childID, 20, 2.0)
+	finishCall(ids.New(), grandchildID, 30, 3.0)
+	finishCall(ids.New(), "unrelated-task", 999, 999.0)
+
+	totals, err := svc.TaskTotals(ctx, parentID)
+	if err != nil {
+		t.Fatalf("TaskTotals: %v", err)
+	}
+	if totals.Calls != 3 || !almostEqual(totals.Cost, 6.0) || totals.InputTokens != 60 {
+		t.Fatalf("parent totals should include child+grandchild but not the unrelated task: %+v", totals)
+	}
+
+	childTotals, err := svc.TaskTotals(ctx, childID)
+	if err != nil {
+		t.Fatalf("TaskTotals(child): %v", err)
+	}
+	if childTotals.Calls != 2 || !almostEqual(childTotals.Cost, 5.0) {
+		t.Fatalf("child totals should include itself + grandchild only: %+v", childTotals)
 	}
 }
 

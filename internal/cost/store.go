@@ -162,8 +162,40 @@ func (s *service) SessionTotals(ctx context.Context, sessionID string) (Totals, 
 	return t, nil
 }
 
+// TaskTotals aggregates a task's own calls plus every descendant task's calls
+// (subagent tasks per roadmapplan.md §11.3, multi-repo children per §11.4),
+// walking tasks.parent_task_id recursively. Unlike SessionTotals' shallow sum
+// of a precomputed session.cost column, this aggregates directly from
+// model_calls at every level, so it stays correct however deep the subagent
+// tree gets without depending on any intermediate cached total.
 func (s *service) TaskTotals(ctx context.Context, taskID string) (Totals, error) {
-	return s.totals(ctx, "task_id", taskID)
+	const q = `
+WITH RECURSIVE descendant_tasks(task_id) AS (
+    SELECT ?
+    UNION ALL
+    SELECT t.task_id FROM tasks t JOIN descendant_tasks d ON t.parent_task_id = d.task_id
+)
+SELECT
+    COUNT(*),
+    COALESCE(SUM(input_tokens),0),
+    COALESCE(SUM(output_tokens),0),
+    COALESCE(SUM(cache_creation_tokens),0),
+    COALESCE(SUM(cache_read_tokens),0),
+    COALESCE(SUM(estimated_cost),0),
+    COALESCE(SUM(CASE WHEN cost_state = 'cost_unknown' THEN 1 ELSE 0 END),0)
+FROM model_calls
+WHERE task_id IN (SELECT task_id FROM descendant_tasks) AND status != 'started'`
+	row := s.db.QueryRowContext(ctx, q, taskID)
+	var t Totals
+	var unknownCount int64
+	if err := row.Scan(&t.Calls, &t.InputTokens, &t.OutputTokens,
+		&t.CacheCreationTokens, &t.CacheReadTokens, &t.Cost, &unknownCount); err != nil {
+		return Totals{}, fmt.Errorf("failed to aggregate task totals: %w", err)
+	}
+	t.PromptTokens = t.InputTokens + t.CacheCreationTokens
+	t.CompletionTokens = t.OutputTokens + t.CacheReadTokens
+	t.CostUnknown = unknownCount > 0
+	return t, nil
 }
 
 // totals aggregates all non-started calls (completed, failed, cancelled) so that

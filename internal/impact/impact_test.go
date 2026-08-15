@@ -86,6 +86,43 @@ func TestIndexAndAnalyzeDependents(t *testing.T) {
 	}
 }
 
+func TestListNodesAndEdgesScopedToProject(t *testing.T) {
+	store := impact.NewStore(dbtest.New(t))
+	svc := impact.NewService(store)
+	root := writeModule(t)
+	ctx := context.Background()
+
+	if _, err := svc.Index(ctx, "proj-a", root, "rev1"); err != nil {
+		t.Fatalf("Index proj-a: %v", err)
+	}
+	if _, err := svc.Index(ctx, "proj-b", root, "rev1"); err != nil {
+		t.Fatalf("Index proj-b: %v", err)
+	}
+
+	nodes, err := store.ListNodes(ctx, "proj-a", 0)
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	if len(nodes) == 0 {
+		t.Fatal("expected nodes for proj-a")
+	}
+	for _, n := range nodes {
+		if n.ProjectID != "proj-a" {
+			t.Fatalf("ListNodes leaked a node from another project: %+v", n)
+		}
+	}
+
+	edges, err := store.ListEdges(ctx, "proj-a", 0)
+	if err != nil {
+		t.Fatalf("ListEdges: %v", err)
+	}
+	for _, e := range edges {
+		if e.ProjectID != "proj-a" {
+			t.Fatalf("ListEdges leaked an edge from another project: %+v", e)
+		}
+	}
+}
+
 func TestAnalyzeBroadensWhenUncovered(t *testing.T) {
 	svc := newService(t)
 	ctx := context.Background()
