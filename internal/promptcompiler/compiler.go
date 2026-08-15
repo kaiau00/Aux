@@ -82,6 +82,13 @@ type Input struct {
 	// is actually sent to the model, not just how it's displayed. Keyed by
 	// message.ToolResult.ToolCallID. Nil/empty is a no-op.
 	ExcludedToolCallIDs map[string]bool
+	// PinnedToolCallIDs are tool-result parts whose full content is guaranteed
+	// in the compiled prompt (roadmapplan.md §13.11, StatePinned): pinning
+	// overrides both ExcludedToolCallIDs (a pinned-and-excluded call is still
+	// sent in full) and PagingCompiler's content dedup (a pinned call is never
+	// replaced by a dedup reference stub, even as an earlier duplicate
+	// occurrence). Keyed by message.ToolResult.ToolCallID. Nil/empty is a no-op.
+	PinnedToolCallIDs map[string]bool
 }
 
 // Compiler produces a CompiledPrompt from durable state. It is a pure function of
@@ -101,7 +108,7 @@ func NewCompatibilityCompiler() *CompatibilityCompiler { return &CompatibilityCo
 // legacy prompt path.
 func (c *CompatibilityCompiler) Compile(in Input) CompiledPrompt {
 	msgs := cleanMessages(in.History)
-	msgs = applyExclusions(msgs, in.ExcludedToolCallIDs)
+	msgs = applyExclusions(msgs, in.ExcludedToolCallIDs, in.PinnedToolCallIDs)
 	est := EstimateMessages(msgs)
 	prefix := stablePrefixID(in.Tools)
 	pages := decomposePages(in, msgs)
@@ -205,8 +212,9 @@ func estimateText(s string) int64 { return int64(len(s)+3) / 4 }
 // compact stub, leaving message/part structure (and tool_call/tool_result
 // pairing) intact — the same shape dedupRepeatedContent uses for repeated
 // content. This is what makes the TUI's cross-off control a real content
-// change rather than a display-only checkbox (roadmapplan.md §13.11).
-func applyExclusions(msgs []message.Message, excluded map[string]bool) []message.Message {
+// change rather than a display-only checkbox (roadmapplan.md §13.11). A
+// pinned call is never stubbed even if also excluded: pin always wins.
+func applyExclusions(msgs []message.Message, excluded, pinned map[string]bool) []message.Message {
 	if len(excluded) == 0 {
 		return msgs
 	}
@@ -217,7 +225,7 @@ func applyExclusions(msgs []message.Message, excluded map[string]bool) []message
 		changed := false
 		for pi, part := range m.Parts {
 			tr, ok := part.(message.ToolResult)
-			if !ok || !excluded[tr.ToolCallID] {
+			if !ok || !excluded[tr.ToolCallID] || pinned[tr.ToolCallID] {
 				continue
 			}
 			newParts[pi] = message.ToolResult{

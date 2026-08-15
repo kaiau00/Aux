@@ -66,6 +66,93 @@ func TestCreateAndRemoveWorktree(t *testing.T) {
 	}
 }
 
+func TestSyncWorkingTreeOverlaysUncommittedAndUntrackedFiles(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+
+	// Dirty the parent repo after the commit newTestRepo already made:
+	// modify a tracked file (uncommitted change) and add an untracked one.
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("modified\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "ignored.txt"), []byte("skip me\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	wtPath := filepath.Join(t.TempDir(), "subagent-sync")
+	if _, err := worktree.Create(ctx, repo, wtPath, "aux/subagent-sync", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Before syncing, the worktree only has the committed (unmodified) content.
+	if got, _ := os.ReadFile(filepath.Join(wtPath, "README.md")); string(got) != "hello\n" {
+		t.Fatalf("expected pre-sync worktree to have the committed content, got %q", got)
+	}
+
+	if err := worktree.SyncWorkingTree(ctx, repo, wtPath); err != nil {
+		t.Fatalf("SyncWorkingTree: %v", err)
+	}
+
+	if got, err := os.ReadFile(filepath.Join(wtPath, "README.md")); err != nil || string(got) != "modified\n" {
+		t.Fatalf("expected the worktree to pick up the uncommitted edit, got %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(wtPath, "untracked.txt")); err != nil || string(got) != "new\n" {
+		t.Fatalf("expected the worktree to pick up the untracked file, got %q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(wtPath, "ignored.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected the gitignored file to be skipped, got err=%v", err)
+	}
+}
+
+func TestDiffSnapshotsDetectsAddedModifiedAndRemoved(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+	write("unchanged.txt", "same\n")
+	write("modified.txt", "before\n")
+	write("removed.txt", "gone soon\n")
+
+	before, err := worktree.Snapshot(dir)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	write("modified.txt", "after\n")
+	write("added.txt", "new\n")
+	if err := os.Remove(filepath.Join(dir, "removed.txt")); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	after, err := worktree.Snapshot(dir)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	changed := worktree.DiffSnapshots(before, after)
+	want := map[string]bool{"modified.txt": true, "added.txt": true, "removed.txt": true}
+	if len(changed) != len(want) {
+		t.Fatalf("got %v, want paths %v", changed, want)
+	}
+	for _, p := range changed {
+		if !want[p] {
+			t.Fatalf("unexpected changed path %q in %v", p, changed)
+		}
+	}
+	for _, p := range changed {
+		if p == "unchanged.txt" {
+			t.Fatal("unchanged.txt must not be reported as changed")
+		}
+	}
+}
+
 func TestCreateFailsOnDuplicateBranch(t *testing.T) {
 	repo := newTestRepo(t)
 	ctx := context.Background()

@@ -45,4 +45,5 @@ var (
 	SpinnerIcon  = "..." // already ASCII
 	LoadingIcon  = pickIcon("⟳", "~")
 	DocumentIcon = pickIcon("▤", "#")
+	PinIcon      = pickIcon("★", "*")
 )

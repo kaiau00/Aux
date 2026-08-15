@@ -90,6 +90,56 @@ func TestRecordAccess(t *testing.T) {
 	}
 }
 
+func TestPinUnpinAndClear(t *testing.T) {
+	store := contextstore.NewStore(dbtest.New(t))
+	ctx := context.Background()
+
+	if err := store.Pin(ctx, "task-1", "call-a"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if err := store.Pin(ctx, "task-1", "call-b"); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	// A second pin of the same (task, call) is idempotent.
+	if err := store.Pin(ctx, "task-1", "call-a"); err != nil {
+		t.Fatalf("Pin (repeat): %v", err)
+	}
+	// Pinning under a different task must not interfere.
+	if err := store.Pin(ctx, "task-2", "call-a"); err != nil {
+		t.Fatalf("Pin (other task): %v", err)
+	}
+
+	pins, err := store.Pins(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("Pins: %v", err)
+	}
+	if len(pins) != 2 || !pins["call-a"] || !pins["call-b"] {
+		t.Fatalf("unexpected pins: %+v", pins)
+	}
+
+	if err := store.Unpin(ctx, "task-1", "call-a"); err != nil {
+		t.Fatalf("Unpin: %v", err)
+	}
+	pins, err = store.Pins(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("Pins after Unpin: %v", err)
+	}
+	if len(pins) != 1 || pins["call-a"] {
+		t.Fatalf("Unpin did not clear call-a: %+v", pins)
+	}
+
+	if err := store.ClearPins(ctx, "task-1"); err != nil {
+		t.Fatalf("ClearPins: %v", err)
+	}
+	pins, err = store.Pins(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("Pins after Clear: %v", err)
+	}
+	if len(pins) != 0 {
+		t.Fatalf("ClearPins did not clear all: %+v", pins)
+	}
+}
+
 func TestExcludeIncludeAndClear(t *testing.T) {
 	store := contextstore.NewStore(dbtest.New(t))
 	ctx := context.Background()

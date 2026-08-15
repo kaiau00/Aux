@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aux-ai/aux-cli/internal/checkpoint"
+	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/db/dbtest"
 	"github.com/aux-ai/aux-cli/internal/eval"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
@@ -17,6 +19,8 @@ import (
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/skill"
+	"github.com/aux-ai/aux-cli/internal/task"
+	"github.com/aux-ai/aux-cli/internal/validation"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
 
@@ -184,6 +188,53 @@ func TestOptimizationViewEndpoint(t *testing.T) {
 	}
 	if len(view.Experiments) != 1 {
 		t.Fatalf("unexpected view: %+v", view)
+	}
+}
+
+func TestOptimizationViewEndpointSurfacesABComparison(t *testing.T) {
+	conn := dbtest.New(t)
+	ctx := context.Background()
+	expStore := eval.NewExperimentStore(conn)
+
+	tasks := task.NewStore(conn)
+	for _, id := range []string{"baseline-1", "variant-1"} {
+		if err := tasks.CreateTask(ctx, task.Task{
+			ID: id, SessionID: "s", Objective: "x", Mode: task.ModeImplementation,
+			Status: task.StatusCompleted, CreatedAt: 1,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+	}
+	stores := eval.ABStores{
+		Tasks:       tasks,
+		Validations: validation.NewService(validation.NewStore(conn), nil),
+		Ledger:      cost.NewService(conn),
+		Checkpoints: checkpoint.NewStore(conn),
+	}
+	if _, err := stores.CompareAndRecord(ctx, expStore, "proj-1", "governed vs baseline", "baseline-1", "variant-1"); err != nil {
+		t.Fatalf("CompareAndRecord: %v", err)
+	}
+
+	server := &Server{token: "secret", services: Services{
+		Project:      testProjectReader("proj-1"),
+		Optimization: viewmodel.OptimizationStores{Experiments: expStore},
+		Workdir:      "/tmp/widget",
+	}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/optimization?token=secret", nil)
+	rec := httptest.NewRecorder()
+	server.handleOptimizationView(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var view viewmodel.OptimizationVM
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decode view: %v", err)
+	}
+	if len(view.Experiments) != 1 || view.Experiments[0].Comparison == nil {
+		t.Fatalf("expected the A/B comparison in the served view, got %+v", view.Experiments)
+	}
+	if view.Experiments[0].Comparison.Variant.TaskID != "variant-1" {
+		t.Fatalf("unexpected comparison in served view: %+v", view.Experiments[0].Comparison)
 	}
 }
 

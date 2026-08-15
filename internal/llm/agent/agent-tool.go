@@ -4,22 +4,61 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 
+	"github.com/aux-ai/aux-cli/internal/checkpoint"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/hooks"
+	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/impact"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
+	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/lsp"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/permission"
+	"github.com/aux-ai/aux-cli/internal/worktree"
 )
 
 type agentTool struct {
-	deps        Deps
-	hooks       *hooks.Registry
-	permissions permission.Service
-	impactSvc   *impact.Service
-	lspClients  map[string]*lsp.Client
+	deps         Deps
+	hooks        *hooks.Registry
+	permissions  permission.Service
+	impactSvc    *impact.Service
+	lspClients   map[string]*lsp.Client
+	writeTracker *turnWriteTracker
+}
+
+// turnWriteTracker accumulates the file paths each ValidationRunner subagent
+// has changed within a single model turn, so a later sibling in the same
+// turn can be warned about overlapping writes before its result is trusted
+// (roadmapplan.md §11.3: detect overlapping write sets before merge). Entries
+// are intentionally never evicted: a turn's write-set is a handful of short
+// relative paths, and a CLI session's total turn count never grows large
+// enough for that to be a real memory concern.
+type turnWriteTracker struct {
+	mu     sync.Mutex
+	byTurn map[string][]string
+}
+
+func newTurnWriteTracker() *turnWriteTracker {
+	return &turnWriteTracker{byTurn: make(map[string][]string)}
+}
+
+// RecordAndCheck returns the paths in paths that overlap with any subtask
+// already recorded for turnID, then folds paths into that turn's accumulated
+// write-set. An empty turnID or empty paths is a no-op returning nil: with no
+// turn correlation there is no sibling scope to compare against.
+func (t *turnWriteTracker) RecordAndCheck(turnID string, paths []string) []string {
+	if turnID == "" || len(paths) == 0 {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	conflicts := checkpoint.DetectWriteConflicts(t.byTurn[turnID], paths)
+	t.byTurn[turnID] = append(t.byTurn[turnID], paths...)
+	return conflicts
 }
 
 const (
@@ -80,6 +119,24 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 		subCtx = context.WithValue(subCtx, tools.ParentTaskIDContextKey, parentTaskID)
 	}
 
+	// Only RoleValidationRunner gets an isolated worktree (§11.3): it is the
+	// only role with Bash access and therefore the only one that can cause
+	// filesystem side effects a concurrent sibling or the parent could race
+	// on. Every other role is read-only and needs to see the parent's actual
+	// current state (including uncommitted edits) to do its job — e.g. a
+	// Reviewer reviewing "the current changes" — so isolating them would only
+	// add git overhead while making their answers less accurate.
+	var worktreeDir string
+	var worktreeBaseline map[string]string
+	var haveWorktree bool
+	if params.Role == RoleValidationRunner {
+		if dir, before, cleanup, ok := prepareValidationWorktree(ctx, config.WorkingDirectory(), call.ID); ok {
+			subCtx = context.WithValue(subCtx, tools.WorkingDirContextKey, dir)
+			worktreeDir, worktreeBaseline, haveWorktree = dir, before, true
+			defer cleanup()
+		}
+	}
+
 	collector := &reportCollector{}
 	base := TaskAgentTools(b.lspClients)
 	var bashTool tools.BaseTool
@@ -127,10 +184,31 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 		return tools.ToolResponse{}, fmt.Errorf("error generating agent: %s", result.Error)
 	}
 
+	// If this was an isolated validation run, check what its Bash commands
+	// actually changed against every other subtask's write-set already seen
+	// in this same model turn (§11.3: detect overlapping write sets before
+	// merge). The comparison scope is deliberately the model turn, not the
+	// whole session: siblings the model chose to run together are the ones
+	// whose results might get combined, so that's the scope worth flagging.
+	var writeConflicts []string
+	if haveWorktree {
+		if after, err := worktree.Snapshot(worktreeDir); err != nil {
+			logging.Warn("failed to snapshot subagent worktree after run", "call_id", call.ID, "error", err)
+		} else {
+			changed := worktree.DiffSnapshots(worktreeBaseline, after)
+			turnID := tools.CorrelationFromContext(ctx).TurnID
+			writeConflicts = b.writeTracker.RecordAndCheck(turnID, changed)
+		}
+	}
+
 	// The parent session's cost is derived from its own ledger plus the cost of
 	// direct child (subagent) sessions/tasks in cost.Service.SessionTotals /
 	// TaskTotals, so no manual roll-up is needed here.
 	if report, ok := collector.get(); ok {
+		if len(writeConflicts) > 0 {
+			report.Risks = append(report.Risks, fmt.Sprintf(
+				"this run touched the same files as another subagent in this turn: %v — check both results before trusting either", writeConflicts))
+		}
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return tools.ToolResponse{}, fmt.Errorf("error encoding report: %s", err)
@@ -147,12 +225,52 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 	return tools.NewTextResponse(response.Content().String()), nil
 }
 
+// prepareValidationWorktree creates a git worktree for a RoleValidationRunner
+// subagent, checked out at HEAD and then overlaid with repoRoot's live
+// working-tree state via worktree.SyncWorkingTree, so validation runs against
+// the code actually being worked on rather than the last commit. It fails
+// gracefully (ok=false, a no-op cleanup) when repoRoot isn't a git repo or
+// worktree creation otherwise fails, so a subagent still runs — just without
+// isolation — rather than the tool call failing outright. The returned
+// snapshot is the worktree's content hashes immediately after syncing, before
+// the subagent's Bash commands run — the baseline Run needs to later compute
+// what those commands actually changed via worktree.DiffSnapshots.
+func prepareValidationWorktree(ctx context.Context, repoRoot, callID string) (dir string, before map[string]string, cleanup func(), ok bool) {
+	noop := func() {}
+	id := ids.New()
+	path := filepath.Join(os.TempDir(), "aux-subagent-"+id)
+	branch := "aux/subagent/" + id
+
+	wt, err := worktree.Create(ctx, repoRoot, path, branch, "")
+	if err != nil {
+		logging.Warn("subagent worktree unavailable, running without isolation", "call_id", callID, "error", err)
+		return "", nil, noop, false
+	}
+	if err := worktree.SyncWorkingTree(ctx, repoRoot, wt.Path); err != nil {
+		logging.Warn("failed to sync working tree into subagent worktree, running without isolation", "call_id", callID, "error", err)
+		_ = worktree.Remove(context.Background(), repoRoot, wt.Path, true)
+		return "", nil, noop, false
+	}
+	snap, err := worktree.Snapshot(wt.Path)
+	if err != nil {
+		logging.Warn("failed to snapshot subagent worktree baseline, running without isolation", "call_id", callID, "error", err)
+		_ = worktree.Remove(context.Background(), repoRoot, wt.Path, true)
+		return "", nil, noop, false
+	}
+	return wt.Path, snap, func() {
+		if err := worktree.Remove(context.Background(), repoRoot, wt.Path, true); err != nil {
+			logging.Warn("failed to remove subagent worktree", "path", wt.Path, "error", err)
+		}
+	}, true
+}
+
 func NewAgentTool(deps Deps, hookRegistry *hooks.Registry, permissions permission.Service, impactSvc *impact.Service, lspClients map[string]*lsp.Client) tools.BaseTool {
 	return &agentTool{
-		deps:        deps,
-		hooks:       hookRegistry,
-		permissions: permissions,
-		impactSvc:   impactSvc,
-		lspClients:  lspClients,
+		deps:         deps,
+		hooks:        hookRegistry,
+		permissions:  permissions,
+		impactSvc:    impactSvc,
+		lspClients:   lspClients,
+		writeTracker: newTurnWriteTracker(),
 	}
 }

@@ -1,7 +1,6 @@
 package styles
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -10,26 +9,32 @@ import (
 
 var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
-func getColorRGB(c lipgloss.TerminalColor) (uint8, uint8, uint8) {
-	r, g, b, a := c.RGBA()
-
-	// Un-premultiply alpha if needed
-	if a > 0 && a < 0xffff {
-		r = (r * 0xffff) / a
-		g = (g * 0xffff) / a
-		b = (b * 0xffff) / a
+// resolveAdaptiveColor picks the dark/light hex string for color using the
+// renderer's current dark/light setting — the same explicit pin the app sets
+// at startup (see app.initTheme), not a fresh terminal query.
+func resolveAdaptiveColor(color lipgloss.AdaptiveColor) string {
+	if lipgloss.HasDarkBackground() {
+		return color.Dark
 	}
-
-	// Convert from 16-bit to 8-bit color
-	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
+	return color.Light
 }
 
 // ForceReplaceBackgroundWithLipgloss replaces any ANSI background color codes
-// in `input` with a single 24‑bit background (48;2;R;G;B).
-func ForceReplaceBackgroundWithLipgloss(input string, newBgColor lipgloss.TerminalColor) string {
-	// Precompute our new-bg sequence once
-	r, g, b := getColorRGB(newBgColor)
-	newBg := fmt.Sprintf("48;2;%d;%d;%d", r, g, b)
+// in `input` with newBgColor, downsampled to whatever color profile the
+// terminal actually supports (TrueColor/ANSI256/ANSI/Ascii) via
+// lipgloss.ColorProfile(), instead of always emitting a raw 24-bit sequence.
+//
+// This matters concretely: a terminal with incomplete or no 24-bit support —
+// notably Apple's Terminal.app, which many termenv/lipgloss-based tools flag
+// as ANSI256 at best — can silently drop or misrender an unsupported 24-bit
+// background code. The background then falls through to whatever was already
+// active nearby (e.g. a correctly-downsampled accent color from an adjacent
+// styled run), while the foreground text (rendered through glamour's own
+// profile-aware path) renders normally — producing text that's present and
+// selectable but visually unreadable against the wrong background.
+func ForceReplaceBackgroundWithLipgloss(input string, newBgColor lipgloss.AdaptiveColor) string {
+	hex := resolveAdaptiveColor(newBgColor)
+	newBg := lipgloss.ColorProfile().Color(hex).Sequence(true)
 
 	return ansiEscape.ReplaceAllStringFunc(input, func(seq string) string {
 		const (
@@ -99,6 +104,9 @@ func ForceReplaceBackgroundWithLipgloss(input string, newBgColor lipgloss.Termin
 				}
 				val = val*10 + int(c-'0')
 			}
+			// also drop plain ANSI (30-47/90-107) background codes, which is
+			// the form a low-color-profile newBg (or a source run rendered at
+			// a different profile) can use instead of "48;..."
 			keep := !isNum ||
 				((val < 40 || val > 47) && (val < 100 || val > 107) && val != 49)
 
@@ -112,11 +120,14 @@ func ForceReplaceBackgroundWithLipgloss(input string, newBgColor lipgloss.Termin
 			i = j + 1
 		}
 
-		// append our new background
-		if sb.Len() > 0 {
-			sb.WriteByte(';')
+		// append our new background, if the profile actually renders one
+		// (Ascii/NoColor yields "" — nothing to append).
+		if newBg != "" {
+			if sb.Len() > 0 {
+				sb.WriteByte(';')
+			}
+			sb.WriteString(newBg)
 		}
-		sb.WriteString(newBg)
 
 		return "\x1b[" + sb.String() + "m"
 	})

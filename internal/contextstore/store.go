@@ -158,6 +158,57 @@ func (s *Store) Exclusions(ctx context.Context, taskID string) (map[string]bool,
 	return out, rows.Err()
 }
 
+// Pin marks a tool call's result as pinned (roadmapplan.md §13.11, StatePinned):
+// the prompt compiler guarantees its full content is sent on the task's next
+// compile — exempt from both dedup stubbing and exclusion stubbing — rather
+// than only repainting a local checkbox. Idempotent.
+func (s *Store) Pin(ctx context.Context, taskID, toolCallID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO context_pins (id, task_id, tool_call_id, created_at) VALUES (?,?,?,?)`,
+		ids.New(), taskID, toolCallID, time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("failed to pin tool call: %w", err)
+	}
+	return nil
+}
+
+// Unpin clears a single previously recorded pin. Not an error if none existed.
+func (s *Store) Unpin(ctx context.Context, taskID, toolCallID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM context_pins WHERE task_id = ? AND tool_call_id = ?`, taskID, toolCallID)
+	if err != nil {
+		return fmt.Errorf("failed to unpin tool call: %w", err)
+	}
+	return nil
+}
+
+// ClearPins clears every pin for a task.
+func (s *Store) ClearPins(ctx context.Context, taskID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM context_pins WHERE task_id = ?`, taskID)
+	if err != nil {
+		return fmt.Errorf("failed to clear pins: %w", err)
+	}
+	return nil
+}
+
+// Pins returns the set of tool-call ids pinned for a task's next prompt compile.
+func (s *Store) Pins(ctx context.Context, taskID string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT tool_call_id FROM context_pins WHERE task_id = ?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // BindingsForCall returns the page bindings of a model call, joined with page
 // identity, ordered by state then rank. This is the "explain page by page" read.
 func (s *Store) BindingsForCall(ctx context.Context, callID string) ([]BoundPage, error) {

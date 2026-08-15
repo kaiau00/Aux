@@ -39,17 +39,17 @@ func ChangesHeaderText(vm viewmodel.ChangeSummaryVM) string {
 }
 
 // RenderChanges renders the change summary. Additions are green and deletions
-// red (§13.8: conventional diff semantics, not both remapped to amber).
+// red (§13.8: conventional diff semantics, not both remapped to amber). Before
+// anything has changed, this renders nothing — every fresh task otherwise
+// opened with an identical "no changes yet" block, which is boilerplate the
+// panel doesn't need until there's something to report.
 func RenderChanges(vm viewmodel.ChangeSummaryVM, width int) string {
-	if width <= 0 {
+	if width <= 0 || len(vm.Files) == 0 {
 		return ""
 	}
 	t := theme.CurrentTheme()
 	head := lipgloss.NewStyle().Width(width).Foreground(t.Primary()).Bold(true).
 		Render(" " + ChangesHeaderText(vm))
-	if len(vm.Files) == 0 {
-		return head
-	}
 	rows := []string{head}
 	for _, f := range vm.Files {
 		glyph, color := changeGlyph(f.Operation, t)
@@ -97,21 +97,18 @@ func CriterionRowText(c viewmodel.CriterionVM) string {
 }
 
 // RenderValidation renders acceptance criteria and their proof-of-done state
-// (§13.9). It shows a clear "unverified" state when no validation has run and
-// never renders a success treatment without a validated criterion.
+// (§13.9). It never renders a success treatment without a validated
+// criterion. Before there are any acceptance criteria to report on, this
+// renders nothing — the same boilerplate-avoidance as RenderChanges. Once a
+// criterion exists, an unverified one is always shown as unverified,
+// never silently hidden or implied passing.
 func RenderValidation(vm viewmodel.ValidationSummaryVM, width int) string {
-	if width <= 0 {
+	if width <= 0 || len(vm.Criteria) == 0 {
 		return ""
 	}
 	t := theme.CurrentTheme()
 	head := lipgloss.NewStyle().Width(width).Foreground(t.Primary()).Bold(true).
 		Render(" Validation · " + ValidationStateLabel(vm.Overall))
-
-	if len(vm.Criteria) == 0 {
-		note := lipgloss.NewStyle().Width(width).Foreground(t.TextMuted()).Italic(true).
-			Render(" no validation has run")
-		return lipgloss.JoinVertical(lipgloss.Left, head, note)
-	}
 
 	rows := []string{head}
 	for _, c := range vm.Criteria {

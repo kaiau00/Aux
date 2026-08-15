@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/aux-ai/aux-cli/internal/config"
 )
 
 type LSParams struct {
@@ -94,7 +92,7 @@ func (l *lsTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 		return NewTextErrorResponse(fmt.Sprintf("error parsing parameters: %s", err)), nil
 	}
 
-	workingDir := lsWorkingDirectory()
+	workingDir := lsWorkingDirectory(ctx)
 	searchPath := params.Path
 	if searchPath == "" {
 		searchPath = workingDir
@@ -129,7 +127,7 @@ func (l *lsTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 	), nil
 }
 
-func lsWorkingDirectory() (workingDir string) {
+func lsWorkingDirectory(ctx context.Context) (workingDir string) {
 	defer func() {
 		if recover() != nil {
 			if cwd, err := os.Getwd(); err == nil {
@@ -137,7 +135,7 @@ func lsWorkingDirectory() (workingDir string) {
 			}
 		}
 	}()
-	return config.WorkingDirectory()
+	return ResolveWorkingDir(ctx)
 }
 
 func listDirectory(initialPath string, ignorePatterns []string, limit int) ([]string, bool, error) {

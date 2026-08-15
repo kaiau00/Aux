@@ -1,6 +1,8 @@
 package fileutil
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/aux-ai/aux-cli/internal/logging"
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 var (
@@ -33,13 +35,18 @@ func init() {
 	}
 }
 
-func GetRgCmd(globPattern string) *exec.Cmd {
+// GetRgCmd builds a ripgrep file-listing command bound to ctx. It deliberately
+// does not pass -L/--follow: following symlinks with no depth or result bound
+// can walk into a cloud-sync placeholder mount or a symlink cycle and
+// enumerate an effectively unbounded number of paths, which has previously
+// exhausted system memory. Callers should give ctx a deadline so a
+// pathological directory tree can't hang indefinitely either.
+func GetRgCmd(ctx context.Context, globPattern string) *exec.Cmd {
 	if rgPath == "" {
 		return nil
 	}
 	rgArgs := []string{
 		"--files",
-		"-L",
 		"--null",
 	}
 	if globPattern != "" {
@@ -48,12 +55,14 @@ func GetRgCmd(globPattern string) *exec.Cmd {
 		}
 		rgArgs = append(rgArgs, "--glob", globPattern)
 	}
-	cmd := exec.Command(rgPath, rgArgs...)
+	cmd := exec.CommandContext(ctx, rgPath, rgArgs...)
 	cmd.Dir = "."
 	return cmd
 }
 
-func GetFzfCmd(query string) *exec.Cmd {
+// GetFzfCmd builds an fzf filter command bound to ctx; see GetRgCmd for why
+// callers should give ctx a deadline.
+func GetFzfCmd(ctx context.Context, query string) *exec.Cmd {
 	if fzfPath == "" {
 		return nil
 	}
@@ -63,7 +72,7 @@ func GetFzfCmd(query string) *exec.Cmd {
 		"--read0",
 		"--print0",
 	}
-	cmd := exec.Command(fzfPath, fzfArgs...)
+	cmd := exec.CommandContext(ctx, fzfPath, fzfArgs...)
 	cmd.Dir = "."
 	return cmd
 }
@@ -81,7 +90,7 @@ func SkipHidden(path string) bool {
 	}
 
 	commonIgnoredDirs := map[string]bool{
-		".aux":        true,
+		".aux":             true,
 		"node_modules":     true,
 		"vendor":           true,
 		"dist":             true,
@@ -112,6 +121,13 @@ func SkipHidden(path string) bool {
 	return false
 }
 
+// errLimitReached stops GlobWithDoublestar's walk early once enough matches
+// are collected. doublestar's GlobWalk (unlike stdlib fs.WalkDir) does not
+// special-case fs.SkipAll from the callback as a clean stop — it propagates
+// whatever the callback returns as a genuine walk error — so a private
+// sentinel is used instead and unwrapped below rather than surfaced to callers.
+var errLimitReached = errors.New("glob limit reached")
+
 func GlobWithDoublestar(pattern, searchPath string, limit int) ([]string, bool, error) {
 	fsys := os.DirFS(searchPath)
 	relPattern := strings.TrimPrefix(pattern, "/")
@@ -137,11 +153,11 @@ func GlobWithDoublestar(pattern, searchPath string, limit int) ([]string, bool, 
 
 		matches = append(matches, FileInfo{Path: absPath, ModTime: info.ModTime()})
 		if limit > 0 && len(matches) >= limit*2 {
-			return fs.SkipAll
+			return errLimitReached
 		}
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errLimitReached) {
 		return nil, false, fmt.Errorf("glob walk error: %w", err)
 	}
 

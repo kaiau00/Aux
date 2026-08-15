@@ -5,14 +5,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/tui/layout"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type DetailComponent interface {
@@ -99,7 +99,7 @@ func (i *detailCmp) updateContent() {
 func getLevelStyle(level string) lipgloss.Style {
 	style := lipgloss.NewStyle().Bold(true)
 	t := theme.CurrentTheme()
-	
+
 	switch strings.ToLower(level) {
 	case "info":
 		return style.Foreground(t.Info())

@@ -41,6 +41,7 @@ type ContextEntry struct {
 	Score      float64
 	Reason     string
 	CrossedOff bool
+	Pinned     bool
 	ReadAt     time.Time
 	MessageID  string
 	ToolCallID string
@@ -85,6 +86,11 @@ type ContextPaneCmp struct {
 	pageList        viewmodel.ContextPageListVM
 	expandedContext bool
 
+	// showDashboardURL reveals the full tokened dashboard URL. It stays
+	// collapsed to a one-line status by default — the full copy-paste URL
+	// isn't something you need visible on every redraw of every session.
+	showDashboardURL bool
+
 	// editorFocused suppresses pane hotkeys while the editor textarea is
 	// active so the user can type x/u/c/j/k without triggering context
 	// pane actions.
@@ -94,12 +100,14 @@ type ContextPaneCmp struct {
 }
 
 type ContextPaneKeys struct {
-	Up       key.Binding
-	Down     key.Binding
-	CrossOff key.Binding
-	Uncross  key.Binding
-	Clear    key.Binding
-	Expand   key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	CrossOff     key.Binding
+	Uncross      key.Binding
+	Clear        key.Binding
+	Pin          key.Binding
+	Expand       key.Binding
+	DashboardURL key.Binding
 }
 
 var defaultContextPaneKeys = ContextPaneKeys{
@@ -123,9 +131,17 @@ var defaultContextPaneKeys = ContextPaneKeys{
 		key.WithKeys("c"),
 		key.WithHelp("c", "clear crossed"),
 	),
+	Pin: key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "toggle pin"),
+	),
 	Expand: key.NewBinding(
 		key.WithKeys("e"),
 		key.WithHelp("e", "expand context"),
+	),
+	DashboardURL: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "show dashboard url"),
 	),
 }
 
@@ -202,9 +218,15 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleCross(false)
 		case key.Matches(msg, m.keys.Clear):
 			m.clearCrossed()
+		case key.Matches(msg, m.keys.Pin):
+			m.togglePin()
 		case key.Matches(msg, m.keys.Expand):
 			m.mu.Lock()
 			m.expandedContext = !m.expandedContext
+			m.mu.Unlock()
+		case key.Matches(msg, m.keys.DashboardURL):
+			m.mu.Lock()
+			m.showDashboardURL = !m.showDashboardURL
 			m.mu.Unlock()
 		}
 	}
@@ -212,7 +234,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *ContextPaneCmp) BindingKeys() []key.Binding {
-	return []key.Binding{m.keys.Up, m.keys.Down, m.keys.CrossOff, m.keys.Uncross, m.keys.Clear, m.keys.Expand}
+	return []key.Binding{m.keys.Up, m.keys.Down, m.keys.CrossOff, m.keys.Uncross, m.keys.Clear, m.keys.Pin, m.keys.Expand, m.keys.DashboardURL}
 }
 
 // SetEditorFocused toggles whether the editor textarea currently has focus.
@@ -298,6 +320,34 @@ func (m *ContextPaneCmp) clearCrossed() {
 	_ = m.app.Pages.ClearExclusions(context.Background(), taskID)
 }
 
+// togglePin marks the selected entry pinned (or not) and persists a real pin
+// override for the task's next prompt compile (roadmapplan.md §13.11): a
+// pinned page's full content is guaranteed in the compiled prompt, exempt
+// from both exclusion and dedup stubbing, so p is a stronger guarantee than
+// just not crossing something off.
+func (m *ContextPaneCmp) togglePin() {
+	m.mu.Lock()
+	if m.selected < 0 || m.selected >= len(m.entries) {
+		m.mu.Unlock()
+		return
+	}
+	pinned := !m.entries[m.selected].Pinned
+	m.entries[m.selected].Pinned = pinned
+	toolCallID := m.entries[m.selected].ToolCallID
+	taskID := m.taskID
+	m.mu.Unlock()
+
+	if m.app == nil || m.app.Pages == nil || taskID == "" || toolCallID == "" {
+		return
+	}
+	ctx := context.Background()
+	if pinned {
+		_ = m.app.Pages.Pin(ctx, taskID, toolCallID)
+	} else {
+		_ = m.app.Pages.Unpin(ctx, taskID, toolCallID)
+	}
+}
+
 // absorbMessage scans a message for view tool results and appends one
 // ContextEntry per successful read. Re-reads of the same path replace the
 // prior entry so the pane reflects what is currently in the agent's context,
@@ -368,6 +418,22 @@ func (m *ContextPaneCmp) absorbMessage(msg message.Message) {
 	})
 }
 
+// divider renders a thin, muted rule used between the pane's top-level
+// sections (dashboard/activity/changes+validation/context budget/file list)
+// so they read as distinct groups instead of a single run-on column of
+// same-weight headers.
+func (m *ContextPaneCmp) divider() string {
+	t := theme.CurrentTheme()
+	width := m.width - 2
+	if width < 1 {
+		width = 1
+	}
+	return styles.BaseStyle().
+		Width(m.width).
+		Foreground(t.BorderDim()).
+		Render(" " + strings.Repeat("─", width))
+}
+
 func (m *ContextPaneCmp) View() string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
@@ -393,22 +459,26 @@ func (m *ContextPaneCmp) View() string {
 		Render(" ↑/↓ move · x off · u on · c clear")
 
 	if len(entries) == 0 {
-		empty := baseStyle.
+		// A bold header, an empty-state line, and the hotkey footer for zero
+		// actionable rows was three lines of boilerplate on every fresh
+		// session; the hotkeys aren't relevant until there's something to
+		// act on, so this collapses to one muted line instead.
+		compact := baseStyle.
 			Width(m.width).
 			Foreground(t.TextMuted()).
 			Italic(true).
-			Render(" no files loaded yet")
-		sections := []string{dashboard, " "}
+			Render(" Context — no files loaded yet")
+		sections := []string{dashboard, m.divider()}
 		if activitySection != "" {
-			sections = append(sections, activitySection, " ")
+			sections = append(sections, activitySection, m.divider())
 		}
 		if workbenchSection != "" {
-			sections = append(sections, workbenchSection, " ")
+			sections = append(sections, workbenchSection, m.divider())
 		}
 		if budgetSection != "" {
-			sections = append(sections, budgetSection, " ")
+			sections = append(sections, budgetSection, m.divider())
 		}
-		sections = append(sections, header, " ", empty, " ", footer)
+		sections = append(sections, compact)
 		return baseStyle.
 			Width(m.width).
 			Height(m.height).
@@ -449,15 +519,15 @@ func (m *ContextPaneCmp) View() string {
 		rows = append(rows, m.renderRow(entries[i], i == selected, m.width))
 	}
 
-	sections := []string{dashboard, " "}
+	sections := []string{dashboard, m.divider()}
 	if activitySection != "" {
-		sections = append(sections, activitySection, " ")
+		sections = append(sections, activitySection, m.divider())
 	}
 	if workbenchSection != "" {
-		sections = append(sections, workbenchSection, " ")
+		sections = append(sections, workbenchSection, m.divider())
 	}
 	if budgetSection != "" {
-		sections = append(sections, budgetSection, " ")
+		sections = append(sections, budgetSection, m.divider())
 	}
 	sections = append(sections,
 		header,
@@ -671,7 +741,9 @@ func (m *ContextPaneCmp) buildChanges(ctx context.Context, taskID string) viewmo
 }
 
 // workbenchView renders the changes + validation sections, or "" when the
-// session has no task yet.
+// session has no task yet or neither section has anything to report (both
+// render "" individually before there's a change or a criterion to show —
+// see workbench.RenderChanges/RenderValidation).
 func (m *ContextPaneCmp) workbenchView() string {
 	m.mu.Lock()
 	has := m.hasTask
@@ -681,12 +753,23 @@ func (m *ContextPaneCmp) workbenchView() string {
 	if !has {
 		return ""
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		workbench.RenderChanges(changesVM, m.width),
-		workbench.RenderValidation(validationVM, m.width),
-	)
+	var parts []string
+	if s := workbench.RenderChanges(changesVM, m.width); s != "" {
+		parts = append(parts, s)
+	}
+	if s := workbench.RenderValidation(validationVM, m.width); s != "" {
+		parts = append(parts, s)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
+// dashboardView renders the dashboard status. Collapsed to one line by
+// default (roadmapplan.md §13.6): the full tokened URL is a copy-paste value,
+// not something worth a standing 2-3 line block on every redraw of every
+// session. The "d" key reveals/hides it on demand.
 func (m *ContextPaneCmp) dashboardView() string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
@@ -697,37 +780,46 @@ func (m *ContextPaneCmp) dashboardView() string {
 	}
 	live := url != ""
 
-	// Compact action/state instead of a bare, dominant URL (roadmapplan.md
-	// §13.6). The state is the primary signal; the full tokened URL follows only
-	// when live, so it stays available to open without leading the panel.
 	state := "off"
 	stateColor := t.TextMuted()
 	if live {
 		state = "live · " + dashboardHostPort(url)
 		stateColor = t.Success()
 	}
-	header := baseStyle.
-		Width(m.width).
-		Foreground(t.Primary()).
-		Bold(true).
-		Render(" Dashboard")
-	stateLine := baseStyle.
-		Width(m.width).
-		Foreground(stateColor).
-		Render(" " + state)
 
-	parts := []string{header, stateLine}
+	m.mu.Lock()
+	showURL := m.showDashboardURL
+	m.mu.Unlock()
+
+	hint := ""
 	if live {
-		for _, line := range wrapUnspaced(url, max(4, m.width-1)) {
-			parts = append(parts, baseStyle.
-				Width(m.width).
-				Foreground(t.TextMuted()).
-				Render(" "+line))
+		if showURL {
+			hint = "  ·  d to hide url"
+		} else {
+			hint = "  ·  d for url"
 		}
 	}
-	return baseStyle.
+	line := baseStyle.
 		Width(m.width).
-		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+		Render(
+			lipgloss.NewStyle().Foreground(t.Primary()).Bold(true).Render(" Dashboard") +
+				"  " +
+				lipgloss.NewStyle().Foreground(stateColor).Render(state) +
+				lipgloss.NewStyle().Foreground(t.TextMuted()).Render(hint),
+		)
+
+	if !live || !showURL {
+		return line
+	}
+
+	parts := []string{line}
+	for _, u := range wrapUnspaced(url, max(4, m.width-1)) {
+		parts = append(parts, baseStyle.
+			Width(m.width).
+			Foreground(t.TextMuted()).
+			Render(" "+u))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // dashboardHostPort extracts the compact host:port from a dashboard URL,
@@ -773,6 +865,9 @@ func (m *ContextPaneCmp) renderRow(e ContextEntry, selected bool, width int) str
 	if displayPath == "" {
 		displayPath = filepath.Base(e.AbsPath)
 	}
+	if e.Pinned {
+		displayPath = styles.PinIcon + " " + displayPath
+	}
 
 	lineInfo := fmt.Sprintf("%d ln", e.Lines)
 	scoreInfo := ""
@@ -793,6 +888,8 @@ func (m *ContextPaneCmp) renderRow(e ContextEntry, selected bool, width int) str
 	switch {
 	case e.CrossedOff:
 		style = style.Foreground(t.TextMuted()).Strikethrough(true)
+	case e.Pinned:
+		style = style.Foreground(t.Warning()).Bold(true)
 	case strings.HasPrefix(e.Reason, "rejected:"):
 		style = style.Foreground(t.Error())
 	case e.Reason != "":

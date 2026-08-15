@@ -3,13 +3,13 @@ package dialog
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/tui/layout"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const question = "Are you sure you want to quit?"
@@ -84,7 +84,7 @@ func (q *quitDialogCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (q *quitDialogCmp) View() string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
-	
+
 	yesStyle := baseStyle
 	noStyle := baseStyle
 	spacerStyle := baseStyle.Background(t.Background())

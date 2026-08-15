@@ -182,7 +182,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). A right-han
 
 ### Context pane
 
-Hotkeys are suppressed while the editor is focused, so `x`/`u`/`c`/`e`/`j`/`k` type normally into your prompt; press `Esc` once to leave the editor and the pane takes over.
+Hotkeys are suppressed while the editor is focused, so `x`/`u`/`c`/`p`/`e`/`d`/`j`/`k` type normally into your prompt; press `Esc` once to leave the editor and the pane takes over.
 
 | Shortcut | Action |
 | --- | --- |
@@ -191,7 +191,9 @@ Hotkeys are suppressed while the editor is focused, so `x`/`u`/`c`/`e`/`j`/`k` t
 | `x` | Cross off the selected entry — excludes it from the task's next prompt compile, not just the display |
 | `u` | Un-cross the selected entry |
 | `c` | Clear all crossed-off entries |
+| `p` | Toggle pin on the selected entry — guarantees its full content on the next compile, exempt from both exclusion and dedup stubbing |
 | `e` | Toggle the expanded context view (grouped by resident/available/pinned/evicted/faulted) |
+| `d` | Reveal/hide the full dashboard URL (collapsed to a one-line status by default) |
 
 ### Editor
 

@@ -6,9 +6,9 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
+	"github.com/google/uuid"
 )
 
 var ErrorPermissionDenied = errors.New("permission denied")

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/aux-ai/aux-cli/internal/hooks"
 	"github.com/aux-ai/aux-cli/internal/ids"
 )
 
@@ -63,6 +64,7 @@ type Recorder interface {
 type Executor struct {
 	recorder    Recorder
 	virtualizer Virtualizer
+	hooks       *hooks.Registry
 }
 
 // NewExecutor returns an executor. recorder and virtualizer may both be nil.
@@ -70,12 +72,30 @@ func NewExecutor(recorder Recorder, virtualizer Virtualizer) *Executor {
 	return &Executor{recorder: recorder, virtualizer: virtualizer}
 }
 
+// WithHooks wires a lifecycle-hook registry so ToolPre/ToolPost fire around
+// every tool execution (roadmapplan.md §12.3). Returning an error from a
+// ToolPre handler vetoes the call: the tool never runs and nothing is
+// recorded, matching Registry.Dispatch's documented veto semantics. A nil
+// registry (the default) is a no-op, identical to today's behaviour.
+func (e *Executor) WithHooks(r *hooks.Registry) *Executor {
+	e.hooks = r
+	return e
+}
+
 // Execute runs the tool, recording its lifecycle. The returned response and
-// error are identical to calling tool.Run directly.
+// error are identical to calling tool.Run directly, except a ToolPre veto
+// short-circuits before the tool ever runs.
 func (e *Executor) Execute(ctx context.Context, tool BaseTool, call ToolCall) (ToolResponse, error) {
+	corr := CorrelationFromContext(ctx)
+	if err := e.hooks.Dispatch(ctx, hooks.Event{
+		Point: hooks.ToolPre, TaskID: corr.TaskID, SessionID: corr.SessionID, Tool: call.Name,
+	}); err != nil {
+		return ToolResponse{}, err
+	}
+
 	rec := ExecutionRecord{
 		ID:          ids.New(),
-		Correlation: CorrelationFromContext(ctx),
+		Correlation: corr,
 		ToolCallID:  call.ID,
 		ToolName:    call.Name,
 		InputHash:   HashToolInput(call.Input),
@@ -117,6 +137,14 @@ func (e *Executor) Execute(ctx context.Context, tool BaseTool, call ToolCall) (T
 	if e.recorder != nil {
 		e.recorder.Finish(ctx, rec)
 	}
+
+	// ToolPost is advisory (roadmapplan.md §12.3 Dispatch semantics): its error,
+	// if any, is not surfaced here so a post-hook can never turn a successful
+	// tool call into a failure the caller has to handle.
+	_ = e.hooks.Dispatch(ctx, hooks.Event{
+		Point: hooks.ToolPost, TaskID: corr.TaskID, SessionID: corr.SessionID, Tool: call.Name, Outcome: rec.Status,
+	})
+
 	return resp, err
 }
 

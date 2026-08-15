@@ -119,7 +119,8 @@ var evalABCmd = &cobra.Command{
 			Ledger:      cost.NewService(conn),
 			Checkpoints: checkpoint.NewStore(conn),
 		}
-		c, err := stores.CompareRuns(context.Background(), args[0], args[1])
+		name := fmt.Sprintf("A/B: %s vs %s", args[0], args[1])
+		c, err := stores.CompareAndRecord(context.Background(), eval.NewExperimentStore(conn), "", name, args[0], args[1])
 		if err != nil {
 			return err
 		}
@@ -132,6 +133,7 @@ var evalABCmd = &cobra.Command{
 		printRun("baseline", c.Baseline)
 		printRun("variant", c.Variant)
 		fmt.Printf("  delta=%.3f improved=%v\n", c.Delta, c.Improved)
+		fmt.Println("(persisted — visible on the dashboard's Optimization view)")
 		return nil
 	},
 }

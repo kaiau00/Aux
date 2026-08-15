@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/version"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type SendMsg struct {
@@ -138,4 +138,3 @@ func cwd(width int) string {
 		Width(width).
 		Render(cwd)
 }
-

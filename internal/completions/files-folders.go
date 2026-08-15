@@ -2,15 +2,27 @@ package completions
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"time"
 
-	"github.com/lithammer/fuzzysearch/fuzzy"
 	"github.com/aux-ai/aux-cli/internal/fileutil"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/tui/components/dialog"
+	"github.com/lithammer/fuzzysearch/fuzzy"
 )
+
+// completionScanTimeout bounds every external-process or filesystem-walk path
+// below so a large or slow (e.g. cloud-sync-backed) directory tree can never
+// hang the completion dialog indefinitely.
+const completionScanTimeout = 5 * time.Second
+
+// completionScanLimit bounds the non-rg fallback walk. The completion dialog
+// can only usefully show a small list at a time regardless of how many files
+// exist, so there is no reason for this to be unbounded.
+const completionScanLimit = 5000
 
 type filesAndFoldersContextGroup struct {
 	prefix string
@@ -56,8 +68,11 @@ func processNullTerminatedOutput(outputBytes []byte) []string {
 }
 
 func (cg *filesAndFoldersContextGroup) getFiles(query string) ([]string, error) {
-	cmdRg := fileutil.GetRgCmd("") // No glob pattern for this use case
-	cmdFzf := fileutil.GetFzfCmd(query)
+	ctx, cancel := context.WithTimeout(context.Background(), completionScanTimeout)
+	defer cancel()
+
+	cmdRg := fileutil.GetRgCmd(ctx, "") // No glob pattern for this use case
+	cmdFzf := fileutil.GetFzfCmd(ctx, query)
 
 	var matches []string
 	// Case 1: Both rg and fzf available
@@ -112,7 +127,7 @@ func (cg *filesAndFoldersContextGroup) getFiles(query string) ([]string, error) 
 		// Case 3: Only fzf available
 	} else if cmdFzf != nil {
 		logging.Debug("Using FZF with doublestar fallback for file completions")
-		files, _, err := fileutil.GlobWithDoublestar("**/*", ".", 0)
+		files, _, err := fileutil.GlobWithDoublestar("**/*", ".", completionScanLimit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list files for fzf: %w", err)
 		}
@@ -148,7 +163,7 @@ func (cg *filesAndFoldersContextGroup) getFiles(query string) ([]string, error) 
 		// Case 4: Fallback to doublestar with fuzzy match
 	} else {
 		logging.Debug("Using doublestar with fuzzy match for file completions")
-		allFiles, _, err := fileutil.GlobWithDoublestar("**/*", ".", 0)
+		allFiles, _, err := fileutil.GlobWithDoublestar("**/*", ".", completionScanLimit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to glob files: %w", err)
 		}

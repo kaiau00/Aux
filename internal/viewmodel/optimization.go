@@ -15,6 +15,11 @@ type ExperimentVM struct {
 	Status     string `json:"status"`
 	Runs       int    `json:"runs"`
 	CreatedAt  int64  `json:"createdAt"`
+	// Comparison is the governed-vs-baseline / skill-vs-baseline result when
+	// this experiment came from `aux eval ab` (eval.ABStores.CompareAndRecord),
+	// nil for a RunCompilerExperiment fixture run — never a zero-value
+	// Comparison, which could be mistaken for a real (and unimproved) result.
+	Comparison *eval.Comparison `json:"comparison,omitempty"`
 }
 
 // PolicyVM is one governed-cost policy for the dashboard's Optimization view.
@@ -35,9 +40,22 @@ type OptimizationVM struct {
 	CandidatePolicies []PolicyVM     `json:"candidatePolicies"`
 }
 
-// BuildExperimentVM projects an experiment for display.
-func BuildExperimentVM(e eval.Experiment, runCount int) ExperimentVM {
-	return ExperimentVM{ID: e.ID, Name: e.Name, Hypothesis: e.Hypothesis, Status: e.Status, Runs: runCount, CreatedAt: e.CreatedAt}
+// BuildExperimentVM projects an experiment for display. If any of runs holds
+// an A/B comparison (eval.ABStores.CompareAndRecord's ComparisonVariant), it
+// is surfaced on the result so the dashboard can show the governed/skill vs
+// baseline numbers, not just an experiment name and run count.
+func BuildExperimentVM(e eval.Experiment, runs []eval.Run) ExperimentVM {
+	vm := ExperimentVM{ID: e.ID, Name: e.Name, Hypothesis: e.Hypothesis, Status: e.Status, Runs: len(runs), CreatedAt: e.CreatedAt}
+	for _, r := range runs {
+		if r.Variant != eval.ComparisonVariant {
+			continue
+		}
+		if c, ok := eval.ParseComparison(r.MetricsJSON); ok {
+			vm.Comparison = &c
+			break
+		}
+	}
+	return vm
 }
 
 // BuildPolicyVM projects a governed-cost policy for display.
@@ -70,11 +88,9 @@ func (s OptimizationStores) OptimizationView(ctx context.Context, projectID stri
 	if s.Experiments != nil {
 		if experiments, err := s.Experiments.ListExperiments(ctx, projectID); err == nil {
 			for _, e := range experiments {
-				runCount := 0
-				if runs, rerr := s.Experiments.ListRuns(ctx, e.ID); rerr == nil {
-					runCount = len(runs)
-				}
-				view.Experiments = append(view.Experiments, BuildExperimentVM(e, runCount))
+				var runs []eval.Run
+				runs, _ = s.Experiments.ListRuns(ctx, e.ID)
+				view.Experiments = append(view.Experiments, BuildExperimentVM(e, runs))
 			}
 		}
 	}

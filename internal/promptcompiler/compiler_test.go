@@ -112,6 +112,82 @@ func TestCompilerWithoutExclusionsIsUnaffected(t *testing.T) {
 	}
 }
 
+func TestPinnedToolCallOverridesExclusion(t *testing.T) {
+	c := promptcompiler.NewCompatibilityCompiler()
+	out := c.Compile(promptcompiler.Input{
+		History:             history(),
+		ExcludedToolCallIDs: map[string]bool{"c1": true},
+		PinnedToolCallIDs:   map[string]bool{"c1": true},
+	})
+
+	var result message.ToolResult
+	found := false
+	for _, m := range out.Messages {
+		for _, r := range m.ToolResults() {
+			if r.ToolCallID == "c1" {
+				result, found = r, true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("pinned tool result should still be present")
+	}
+	if result.Content != "match" {
+		t.Fatalf("a pinned tool result must not be stubbed even if also excluded, got %q", result.Content)
+	}
+}
+
+func historyWithRepeatedContent() []message.Message {
+	big := ""
+	for i := 0; i < 60; i++ {
+		big += "duplicate line content padding out past the dedup threshold\n"
+	}
+	return []message.Message{
+		{Role: message.Assistant, Parts: []message.ContentPart{message.ToolCall{ID: "r1", Name: "view", Input: "{}"}}},
+		{Role: message.Tool, Parts: []message.ContentPart{message.ToolResult{ToolCallID: "r1", Content: big}}},
+		{Role: message.Assistant, Parts: []message.ContentPart{message.ToolCall{ID: "r2", Name: "view", Input: "{}"}}},
+		{Role: message.Tool, Parts: []message.ContentPart{message.ToolResult{ToolCallID: "r2", Content: big}}},
+	}
+}
+
+func TestPagingCompilerDedupsRepeatedContentByDefault(t *testing.T) {
+	c := promptcompiler.NewPagingCompiler()
+	out := c.Compile(promptcompiler.Input{History: historyWithRepeatedContent()})
+
+	var first string
+	for _, m := range out.Messages {
+		for _, r := range m.ToolResults() {
+			if r.ToolCallID == "r1" {
+				first = r.Content
+			}
+		}
+	}
+	if first == historyWithRepeatedContent()[1].ToolResults()[0].Content {
+		t.Fatal("the earlier occurrence of duplicate content should be stubbed by dedup")
+	}
+}
+
+func TestPinnedToolCallOverridesDedup(t *testing.T) {
+	c := promptcompiler.NewPagingCompiler()
+	out := c.Compile(promptcompiler.Input{
+		History:           historyWithRepeatedContent(),
+		PinnedToolCallIDs: map[string]bool{"r1": true},
+	})
+
+	var first string
+	for _, m := range out.Messages {
+		for _, r := range m.ToolResults() {
+			if r.ToolCallID == "r1" {
+				first = r.Content
+			}
+		}
+	}
+	want := historyWithRepeatedContent()[1].ToolResults()[0].Content
+	if first != want {
+		t.Fatal("a pinned tool result must not be stubbed by dedup even as an earlier duplicate occurrence")
+	}
+}
+
 func TestPagingCompilerAppliesExclusions(t *testing.T) {
 	c := promptcompiler.NewPagingCompiler()
 	out := c.Compile(promptcompiler.Input{History: history(), ExcludedToolCallIDs: map[string]bool{"c1": true}})

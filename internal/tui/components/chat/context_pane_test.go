@@ -2,12 +2,14 @@ package chat
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/db/dbtest"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestToggleCrossPersistsRealExclusion(t *testing.T) {
@@ -38,6 +40,50 @@ func TestToggleCrossPersistsRealExclusion(t *testing.T) {
 	}
 	if excl["call-a"] {
 		t.Fatalf("expected call-a no longer excluded after un-cross, got %+v", excl)
+	}
+}
+
+func TestTogglePinPersistsRealPin(t *testing.T) {
+	conn := dbtest.New(t)
+	pages := contextstore.NewStore(conn)
+	m := NewContextPaneCmp(&app.App{Pages: pages})
+	m.taskID = "task-1"
+	m.entries = []ContextEntry{{Path: "a.go", ToolCallID: "call-a"}}
+	m.selected = 0
+
+	m.togglePin()
+
+	pins, err := pages.Pins(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("Pins: %v", err)
+	}
+	if !pins["call-a"] {
+		t.Fatalf("expected call-a pinned after toggle, got %+v", pins)
+	}
+	if !m.entries[0].Pinned {
+		t.Fatal("expected the local entry to also show pinned")
+	}
+
+	m.togglePin()
+	pins, err = pages.Pins(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("Pins after un-pin: %v", err)
+	}
+	if pins["call-a"] {
+		t.Fatalf("expected call-a no longer pinned after second toggle, got %+v", pins)
+	}
+	if m.entries[0].Pinned {
+		t.Fatal("expected the local entry to also show un-pinned")
+	}
+}
+
+func TestTogglePinWithoutTaskDoesNotPanic(t *testing.T) {
+	m := NewContextPaneCmp(&app.App{})
+	m.entries = []ContextEntry{{Path: "a.go", ToolCallID: "call-a"}}
+	m.selected = 0
+	m.togglePin() // no Pages, no taskID: must be a safe no-op beyond local state
+	if !m.entries[0].Pinned {
+		t.Fatal("local state should still update even without a wired store")
 	}
 }
 
@@ -99,6 +145,51 @@ func TestExpandedViewFallsBackToCompactWhenNoPageBindings(t *testing.T) {
 
 	if got := m.budgetView(); got == "" {
 		t.Fatal("expected a fallback to the compact view when there is nothing to expand")
+	}
+}
+
+func TestDashboardURLKeyTogglesVisibility(t *testing.T) {
+	m := NewContextPaneCmp(&app.App{})
+	m.width = 60
+
+	if m.showDashboardURL {
+		t.Fatal("dashboard URL should start collapsed")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if !m.showDashboardURL {
+		t.Fatal("expected 'd' to reveal the dashboard URL")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if m.showDashboardURL {
+		t.Fatal("expected a second 'd' to collapse it again")
+	}
+}
+
+func TestDashboardURLHiddenWhenNotLive(t *testing.T) {
+	// No app.Dashboard wired (as in most tests): dashboardView must not
+	// dereference a nil Dashboard, and the reveal hint only makes sense once
+	// the dashboard is actually live.
+	m := NewContextPaneCmp(&app.App{})
+	m.width = 60
+	if out := m.dashboardView(); out == "" {
+		t.Fatal("dashboardView should still render an 'off' line")
+	} else if strings.Contains(out, "for url") {
+		t.Fatalf("should not hint at revealing a URL that doesn't exist: %q", out)
+	}
+}
+
+func TestViewCollapsesEmptyContextToOneLine(t *testing.T) {
+	conn := dbtest.New(t)
+	pages := contextstore.NewStore(conn)
+	m := NewContextPaneCmp(&app.App{Pages: pages})
+	m.width, m.height = 60, 24
+
+	out := m.View()
+	if strings.Contains(out, "no files loaded yet") == false {
+		t.Fatalf("expected the collapsed empty-context line, got:\n%s", out)
+	}
+	if strings.Contains(out, "move · x off · u on · c clear") {
+		t.Fatal("hotkey footer should not show when there's nothing to act on")
 	}
 }
 

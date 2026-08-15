@@ -44,6 +44,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/validation"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type App struct {
@@ -185,6 +186,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Pages:        app.Pages,
 		Compiler:     compiler,
 		GovernorMode: cost.GovernorMode(config.Get().CostGovernor.Mode),
+		Hooks:        app.Hooks,
 	}
 	coderTools := append(
 		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients, app.Hooks, app.Impact),
@@ -350,16 +352,40 @@ func readGoMod(root string) (string, bool) {
 // initTheme sets the application theme based on the configuration
 func (app *App) initTheme() {
 	cfg := config.Get()
-	if cfg == nil || cfg.TUI.Theme == "" {
-		return // Use default theme
+	if cfg == nil {
+		return
 	}
 
-	// Try to set the theme from config
-	err := theme.SetTheme(cfg.TUI.Theme)
-	if err != nil {
-		logging.Warn("Failed to set theme from config, using default theme", "theme", cfg.TUI.Theme, "error", err)
-	} else {
-		logging.Debug("Set theme from config", "theme", cfg.TUI.Theme)
+	if cfg.TUI.Theme != "" {
+		if err := theme.SetTheme(cfg.TUI.Theme); err != nil {
+			logging.Warn("Failed to set theme from config, using default theme", "theme", cfg.TUI.Theme, "error", err)
+		} else {
+			logging.Debug("Set theme from config", "theme", cfg.TUI.Theme)
+		}
+	}
+
+	// Pin the light/dark background assumption explicitly rather than
+	// leaving every AdaptiveColor in the UI — including markdown message
+	// text (internal/tui/styles/markdown.go) — to resolve off a single
+	// cached, one-shot terminal query (see TUIConfig.Background's doc
+	// comment for why that query can silently make every message
+	// unreadable for a whole session).
+	if dark, ok := backgroundOverride(cfg.TUI.Background); ok {
+		lipgloss.SetHasDarkBackground(dark)
+	}
+}
+
+// backgroundOverride resolves a TUIConfig.Background preference to an
+// explicit dark/light override. ok is false only for "auto", which leaves
+// lipgloss's own one-shot terminal-query detection in charge.
+func backgroundOverride(pref string) (dark bool, ok bool) {
+	switch pref {
+	case "light":
+		return false, true
+	case "auto":
+		return false, false
+	default: // "dark" (the default) and any unrecognized value
+		return true, true
 	}
 }
 

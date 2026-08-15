@@ -31,6 +31,14 @@ func TestChangesHeaderCounts(t *testing.T) {
 	}
 }
 
+func TestRenderChangesEmptyRendersNothing(t *testing.T) {
+	// Before anything has changed, this is boilerplate ("no changes yet" on
+	// every fresh task) rather than useful information.
+	if out := RenderChanges(viewmodel.ChangeSummaryVM{}, 40); out != "" {
+		t.Fatalf("empty change set should render nothing, got %q", out)
+	}
+}
+
 func TestRenderChangesFitsWidth(t *testing.T) {
 	vm := viewmodel.ChangeSummaryVM{
 		Files: []viewmodel.ChangedFileVM{
@@ -67,14 +75,15 @@ func TestValidationNeverImpliesSuccessWithoutEvidence(t *testing.T) {
 	}
 }
 
-func TestValidationEmptyShowsUnverified(t *testing.T) {
-	// §13.9: clear unverified state when no relevant validation has run.
-	out := RenderValidation(viewmodel.BuildValidationSummary(nil), 40)
-	if !strings.Contains(out, "unverified") {
-		t.Fatalf("empty validation should read unverified: %q", out)
-	}
-	if !strings.Contains(out, "no validation has run") {
-		t.Fatalf("empty validation should explain no run: %q", out)
+func TestValidationEmptyRendersNothing(t *testing.T) {
+	// Before there are any acceptance criteria, the section is boilerplate
+	// ("unverified" / "no validation has run" on every fresh task) rather
+	// than useful information, so it renders nothing until a criterion
+	// exists. This must never be confused with claiming success: an
+	// unverified criterion, once one exists, is still always shown as
+	// unverified (see TestValidationNeverImpliesSuccessWithoutEvidence).
+	if out := RenderValidation(viewmodel.BuildValidationSummary(nil), 40); out != "" {
+		t.Fatalf("empty validation should render nothing, got %q", out)
 	}
 }
 

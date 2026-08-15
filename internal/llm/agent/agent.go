@@ -12,6 +12,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
+	"github.com/aux-ai/aux-cli/internal/hooks"
 	"github.com/aux-ai/aux-cli/internal/ids"
 	llmcontext "github.com/aux-ai/aux-cli/internal/llm/context"
 	"github.com/aux-ai/aux-cli/internal/llm/models"
@@ -87,6 +88,7 @@ type Deps struct {
 	Virtualizer  tools.Virtualizer       // optional; large tool-output virtualization
 	Pages        *contextstore.Store     // optional; records page bindings per call
 	GovernorMode cost.GovernorMode       // optional; off/observe/on, default off
+	Hooks        *hooks.Registry         // optional; dispatches ToolPre/ToolPost around tool execution
 }
 
 type agent struct {
@@ -151,7 +153,7 @@ func NewAgent(
 		compiler:          compiler,
 		pages:             deps.Pages,
 		governor:          cost.NewGovernor(deps.GovernorMode),
-		executor:          tools.NewExecutor(deps.Recorder, deps.Virtualizer),
+		executor:          tools.NewExecutor(deps.Recorder, deps.Virtualizer).WithHooks(deps.Hooks),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
 		summarizeProvider: summarizeProvider,
@@ -436,9 +438,10 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// manifest is recorded for inspection and reconciliation.
 	corr := tools.CorrelationFromContext(ctx)
 	projectManifest, taskSpecText := promptcompiler.ProjectContextFromContext(ctx)
-	var excluded map[string]bool
+	var excluded, pinned map[string]bool
 	if a.pages != nil && corr.TaskID != "" {
 		excluded, _ = a.pages.Exclusions(ctx, corr.TaskID)
+		pinned, _ = a.pages.Pins(ctx, corr.TaskID)
 	}
 	compiled := a.compiler.Compile(promptcompiler.Input{
 		TaskID:              corr.TaskID,
@@ -448,6 +451,7 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 		ProjectManifest:     projectManifest,
 		TaskSpecText:        taskSpecText,
 		ExcludedToolCallIDs: excluded,
+		PinnedToolCallIDs:   pinned,
 	})
 	resident, available := a.bindPages(ctx, corr.TaskID, tracker.id, compiled)
 	a.emit(ctx, eventstore.Append{

@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/aux-ai/aux-cli/internal/config"
 )
 
 type ToolInfo struct {
@@ -23,6 +25,7 @@ type (
 	parentTaskIDContextKey    string
 	projectIDContextKey       string
 	toolExecutionIDContextKey string
+	workingDirContextKey      string
 )
 
 const (
@@ -40,6 +43,12 @@ const (
 	ParentTaskIDContextKey    parentTaskIDContextKey    = "parent_task_id"
 	ProjectIDContextKey       projectIDContextKey       = "project_id"
 	ToolExecutionIDContextKey toolExecutionIDContextKey = "tool_execution_id"
+	// WorkingDirContextKey overrides the directory filesystem tools operate in
+	// for this call, e.g. a subagent's isolated worktree (roadmapplan.md
+	// §11.3). Set by the agent tool before spawning a subagent; read via
+	// ResolveWorkingDir. Absent for ordinary top-level tool calls, which keep
+	// using the process-wide configured working directory.
+	WorkingDirContextKey workingDirContextKey = "working_dir"
 )
 
 type ToolResponse struct {
@@ -84,6 +93,17 @@ type ToolCall struct {
 type BaseTool interface {
 	Info() ToolInfo
 	Run(ctx context.Context, params ToolCall) (ToolResponse, error)
+}
+
+// ResolveWorkingDir returns the directory a filesystem-facing tool call
+// should operate in: a per-call override set on ctx if present (e.g. a
+// subagent's isolated worktree), otherwise the process-wide configured
+// working directory.
+func ResolveWorkingDir(ctx context.Context) string {
+	if v, ok := ctx.Value(WorkingDirContextKey).(string); ok && v != "" {
+		return v
+	}
+	return config.WorkingDirectory()
 }
 
 func GetContextValues(ctx context.Context) (string, string) {

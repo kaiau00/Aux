@@ -849,7 +849,9 @@ func formatTimestampDiff(start, end int64) string {
 }
 
 // renderReasoningPreview keeps hidden agent internals discoverable without
-// showing thoughts, tool details, or intermediate drafts in the main transcript.
+// showing thoughts, tool details, or intermediate drafts in the main
+// transcript. A single line: the spinner and "reasoning hidden" already read
+// as one unit, so the expand hint joins them instead of taking its own row.
 func renderReasoningPreview(width int, spinnerFrame string) string {
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
@@ -863,15 +865,11 @@ func renderReasoningPreview(width int, spinnerFrame string) string {
 
 	spinnerStyle := baseStyle.Foreground(t.Primary()).Bold(true)
 	labelStyle := baseStyle.Foreground(t.TextMuted()).Italic(true)
-	parts := []string{lipgloss.JoinHorizontal(
+
+	return style.Render(lipgloss.JoinHorizontal(
 		lipgloss.Left,
 		spinnerStyle.Render(spinnerFrame),
-		labelStyle.Render(" reasoning hidden"),
-	)}
-
-	parts = append(parts, baseStyle.
-		Foreground(t.TextMuted()).
-		Render("↓ Tab to expand"))
-
-	return style.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+		labelStyle.Render(" reasoning hidden · "),
+		labelStyle.Render("↓ Tab to expand"),
+	))
 }

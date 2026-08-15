@@ -99,3 +99,59 @@ func TestMetricsReadsRecordedRun(t *testing.T) {
 		t.Fatalf("without validation/cost, metric should be 0: %+v", m)
 	}
 }
+
+func TestCompareAndRecordPersistsAComparableRun(t *testing.T) {
+	conn := dbtest.New(t)
+	ctx := context.Background()
+
+	tasks := task.NewStore(conn)
+	for _, id := range []string{"baseline-1", "variant-1"} {
+		if err := tasks.CreateTask(ctx, task.Task{
+			ID: id, SessionID: "s", Objective: "x", Mode: task.ModeImplementation,
+			Status: task.StatusCompleted, CreatedAt: 1,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", id, err)
+		}
+	}
+
+	stores := ABStores{
+		Tasks:       tasks,
+		Validations: validation.NewService(validation.NewStore(conn), nil),
+		Ledger:      cost.NewService(conn),
+		Checkpoints: checkpoint.NewStore(conn),
+	}
+	experiments := NewExperimentStore(conn)
+
+	c, err := stores.CompareAndRecord(ctx, experiments, "", "governed vs baseline", "baseline-1", "variant-1")
+	if err != nil {
+		t.Fatalf("CompareAndRecord: %v", err)
+	}
+	if c.Baseline.TaskID != "baseline-1" || c.Variant.TaskID != "variant-1" {
+		t.Fatalf("unexpected comparison: %+v", c)
+	}
+
+	// The comparison must now be durably visible to a dashboard reading
+	// experiments/runs, not just returned to the caller.
+	exps, err := experiments.ListExperiments(ctx, "")
+	if err != nil {
+		t.Fatalf("ListExperiments: %v", err)
+	}
+	if len(exps) != 1 || exps[0].Name != "governed vs baseline" {
+		t.Fatalf("expected one persisted experiment named %q, got %+v", "governed vs baseline", exps)
+	}
+
+	runs, err := experiments.ListRuns(ctx, exps[0].ID)
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one run recording the comparison, got %d", len(runs))
+	}
+	got, ok := ParseComparison(runs[0].MetricsJSON)
+	if !ok {
+		t.Fatalf("run metrics did not parse as a Comparison: %q", runs[0].MetricsJSON)
+	}
+	if got.Baseline.TaskID != "baseline-1" || got.Variant.TaskID != "variant-1" {
+		t.Fatalf("persisted comparison mismatch: %+v", got)
+	}
+}

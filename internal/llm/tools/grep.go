@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/fileutil"
 )
 
@@ -139,7 +138,7 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 
 	searchPath := params.Path
 	if searchPath == "" {
-		searchPath = config.WorkingDirectory()
+		searchPath = ResolveWorkingDir(ctx)
 	}
 
 	matches, truncated, err := searchFiles(searchPattern, searchPath, params.Include, 100)

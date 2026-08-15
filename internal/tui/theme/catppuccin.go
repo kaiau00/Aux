@@ -39,12 +39,17 @@ func NewCatppuccinTheme() *CatppuccinTheme {
 		Light: latte.Red().Hex,
 	}
 	theme.WarningColor = lipgloss.AdaptiveColor{
-		Dark:  mocha.Peach().Hex,
-		Light: latte.Peach().Hex,
+		Dark: mocha.Peach().Hex,
+		// The official Latte Peach/Green fall short of WCAG contrast against
+		// this theme's custom light background (#EEEEEE, not Latte's own base),
+		// so these two are darkened overrides rather than the literal palette
+		// value, following this file's existing precedent of custom "light
+		// equivalent" values elsewhere (§13.18).
+		Light: "#e45401",
 	}
 	theme.SuccessColor = lipgloss.AdaptiveColor{
 		Dark:  mocha.Green().Hex,
-		Light: latte.Green().Hex,
+		Light: "#3d9829",
 	}
 	theme.InfoColor = lipgloss.AdaptiveColor{
 		Dark:  mocha.Blue().Hex,

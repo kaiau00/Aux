@@ -2,12 +2,18 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/aux-ai/aux-cli/internal/checkpoint"
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/task"
 	"github.com/aux-ai/aux-cli/internal/validation"
 )
+
+// ComparisonVariant marks an eval Run as holding a full A/B Comparison in its
+// MetricsJSON (from CompareAndRecord), distinguishing it from a
+// RunCompilerExperiment fixture run so a reader can tell the two apart.
+const ComparisonVariant = "ab-comparison"
 
 // The A/B runner measures a capability (governor policy, skill) against a
 // baseline on the same preferred model (roadmapplan.md §9.6, §10.3, §16.7). The
@@ -106,4 +112,59 @@ func (s ABStores) CompareRuns(ctx context.Context, baselineTaskID, variantTaskID
 		return Comparison{}, err
 	}
 	return Compare(baseline, variant), nil
+}
+
+// CompareAndRecord computes a baseline-vs-variant comparison via CompareRuns
+// and persists it as an experiment with one run, so it durably shows up
+// anywhere experiments are read (roadmapplan.md §13.14 item 7, §9.6, §10.3) —
+// e.g. the dashboard's Optimization view — instead of only being printed to
+// stdout by `aux eval ab`. The whole Comparison is stored as one run's
+// MetricsJSON (self-contained; no baseline/variant pairing needed at read
+// time), tagged ComparisonVariant so a reader can distinguish it from a
+// RunCompilerExperiment fixture run.
+func (s ABStores) CompareAndRecord(ctx context.Context, store *ExperimentStore, projectID, name, baselineTaskID, variantTaskID string) (Comparison, error) {
+	c, err := s.CompareRuns(ctx, baselineTaskID, variantTaskID)
+	if err != nil {
+		return Comparison{}, err
+	}
+	exp, err := store.CreateExperiment(ctx, Experiment{
+		ProjectID:  projectID,
+		Name:       name,
+		Hypothesis: "the variant improves accepted validated changes per dollar over the baseline",
+		Status:     "completed",
+	})
+	if err != nil {
+		return Comparison{}, err
+	}
+	metrics, err := json.Marshal(c)
+	if err != nil {
+		return Comparison{}, err
+	}
+	status := "fail"
+	if c.Improved {
+		status = "pass"
+	}
+	if err := store.RecordRun(ctx, Run{
+		ExperimentID: exp.ID, EvalCaseID: variantTaskID, Variant: ComparisonVariant,
+		Status: status, MetricsJSON: string(metrics),
+	}); err != nil {
+		return Comparison{}, err
+	}
+	return c, nil
+}
+
+// ParseComparison decodes a run's MetricsJSON as a Comparison. It returns
+// ok=false for any run that isn't a CompareAndRecord result (e.g. a
+// RunCompilerExperiment fixture run, whose MetricsJSON has a different
+// shape), rather than returning a zero-value Comparison that could be
+// mistaken for a real (and coincidentally unimproved) result.
+func ParseComparison(metricsJSON string) (Comparison, bool) {
+	var c Comparison
+	if err := json.Unmarshal([]byte(metricsJSON), &c); err != nil {
+		return Comparison{}, false
+	}
+	if c.Baseline.TaskID == "" || c.Variant.TaskID == "" {
+		return Comparison{}, false
+	}
+	return c, true
 }

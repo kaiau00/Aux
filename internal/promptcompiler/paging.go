@@ -27,8 +27,8 @@ func (c *PagingCompiler) Compile(in Input) CompiledPrompt {
 	original := cleanMessages(in.History)
 	fullEst := EstimateMessages(original)
 
-	deduped := dedupRepeatedContent(original)
-	deduped = applyExclusions(deduped, in.ExcludedToolCallIDs)
+	deduped := dedupRepeatedContent(original, in.PinnedToolCallIDs)
+	deduped = applyExclusions(deduped, in.ExcludedToolCallIDs, in.PinnedToolCallIDs)
 	est := EstimateMessages(deduped)
 	prefix := stablePrefixID(in.Tools)
 
@@ -65,8 +65,10 @@ func (c *PagingCompiler) Compile(in Input) CompiledPrompt {
 // dedupRepeatedContent replaces every non-final occurrence of an identical large
 // tool-result content with a reference stub. Messages are copied (immutable
 // input); only the duplicated parts are rewritten. Tool_call/tool_result pairing
-// is preserved because the result part remains, only its content shortens.
-func dedupRepeatedContent(msgs []message.Message) []message.Message {
+// is preserved because the result part remains, only its content shortens. A
+// pinned call's content is always sent in full, even as an earlier duplicate
+// occurrence that would otherwise be stubbed.
+func dedupRepeatedContent(msgs []message.Message, pinned map[string]bool) []message.Message {
 	// Count occurrences and find the last index (message, part) for each hash.
 	type pos struct{ mi, pi int }
 	last := map[string]pos{}
@@ -89,7 +91,7 @@ func dedupRepeatedContent(msgs []message.Message) []message.Message {
 		copy(newParts, m.Parts)
 		for pi, part := range m.Parts {
 			tr, ok := part.(message.ToolResult)
-			if !ok || len(tr.Content) < minDedupBytes {
+			if !ok || len(tr.Content) < minDedupBytes || pinned[tr.ToolCallID] {
 				continue
 			}
 			h := hashString(tr.Content)

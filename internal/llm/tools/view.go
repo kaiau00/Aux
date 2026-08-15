@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	llmcontext "github.com/aux-ai/aux-cli/internal/llm/context"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/lsp"
@@ -117,7 +116,7 @@ func (v *viewTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	// Handle relative paths
 	filePath := params.FilePath
 	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(config.WorkingDirectory(), filePath)
+		filePath = filepath.Join(ResolveWorkingDir(ctx), filePath)
 	}
 
 	// Check if file exists

@@ -36,7 +36,7 @@ func NewDraculaTheme() *DraculaTheme {
 	lightComment := "#6272a4"
 	lightCyan := "#0097a7"
 	lightGreen := "#388e3c"
-	lightOrange := "#f57c00"
+	lightOrange := "#d66d00" // darkened from #f57c00 for WCAG contrast against the light background (§13.18)
 	lightPink := "#d81b60"
 	lightPurple := "#7e57c2"
 	lightRed := "#e53935"

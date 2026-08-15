@@ -72,6 +72,16 @@ type LSPConfig struct {
 // TUIConfig defines the configuration for the Terminal User Interface.
 type TUIConfig struct {
 	Theme string `json:"theme,omitempty"`
+	// Background pins the light/dark background assumption used to resolve
+	// every AdaptiveColor in the UI (including markdown message text):
+	// "dark", "light", or "auto". Defaults to "dark" because every built-in
+	// theme is dark-first and "auto" depends on a one-shot terminal query
+	// (OSC 11) that is cached for the whole session — if that query is
+	// misread or times out in a given terminal/multiplexer, every message
+	// renders with inverted, unreadable text for the entire run with no way
+	// to recover short of restarting. Set "auto" to opt back into live
+	// detection, or "light" for a light terminal.
+	Background string `json:"background,omitempty"`
 }
 
 // DashboardConfig defines the local read-only web dashboard configuration.
@@ -293,6 +303,7 @@ func setDefaults(debug bool) {
 	viper.SetDefault("data.directory", defaultDataDirectory)
 	viper.SetDefault("contextPaths", defaultContextPaths)
 	viper.SetDefault("tui.theme", "aux")
+	viper.SetDefault("tui.background", "dark")
 	viper.SetDefault("dashboard.enabled", true)
 	viper.SetDefault("dashboard.host", "127.0.0.1")
 	viper.SetDefault("dashboard.port", 0)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aux-ai/aux-cli/internal/hooks"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 )
 
@@ -32,8 +33,14 @@ type captureRecorder struct {
 	fins   int
 }
 
-func (c *captureRecorder) Start(_ context.Context, rec tools.ExecutionRecord)  { c.start = rec; c.starts++ }
-func (c *captureRecorder) Finish(_ context.Context, rec tools.ExecutionRecord) { c.finish = rec; c.fins++ }
+func (c *captureRecorder) Start(_ context.Context, rec tools.ExecutionRecord) {
+	c.start = rec
+	c.starts++
+}
+func (c *captureRecorder) Finish(_ context.Context, rec tools.ExecutionRecord) {
+	c.finish = rec
+	c.fins++
+}
 
 func TestExecutorRecordsCompletion(t *testing.T) {
 	rec := &captureRecorder{}
@@ -112,6 +119,80 @@ func TestExecutorNilRecorderRunsTool(t *testing.T) {
 	resp, err := ex.Execute(context.Background(), ft, tools.ToolCall{ID: "c", Name: "ls", Input: "{}"})
 	if err != nil || resp.Content != "ok" {
 		t.Fatalf("nil recorder should still run tool: resp=%q err=%v", resp.Content, err)
+	}
+}
+
+func TestExecutorDispatchesToolPreAndPostHooks(t *testing.T) {
+	reg := hooks.NewRegistry()
+	var events []hooks.Event
+	reg.Register(hooks.ToolPre, func(_ context.Context, e hooks.Event) error {
+		events = append(events, e)
+		return nil
+	})
+	reg.Register(hooks.ToolPost, func(_ context.Context, e hooks.Event) error {
+		events = append(events, e)
+		return nil
+	})
+
+	ex := tools.NewExecutor(nil, nil).WithHooks(reg)
+	ft := &fakeTool{name: "grep", resp: tools.NewTextResponse("hi")}
+	ctx := context.WithValue(context.Background(), tools.SessionIDContextKey, "s1")
+
+	if _, err := ex.Execute(ctx, ft, tools.ToolCall{ID: "c1", Name: "grep", Input: "{}"}); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 hook events (pre+post), got %d: %+v", len(events), events)
+	}
+	if events[0].Point != hooks.ToolPre || events[0].Tool != "grep" || events[0].SessionID != "s1" {
+		t.Fatalf("unexpected pre event: %+v", events[0])
+	}
+	if events[1].Point != hooks.ToolPost || events[1].Tool != "grep" || events[1].Outcome != tools.ExecCompleted {
+		t.Fatalf("unexpected post event: %+v", events[1])
+	}
+}
+
+func TestExecutorToolPreVetoSkipsToolRun(t *testing.T) {
+	reg := hooks.NewRegistry()
+	vetoErr := errors.New("blocked by policy")
+	reg.Register(hooks.ToolPre, func(_ context.Context, _ hooks.Event) error {
+		return vetoErr
+	})
+	var postFired bool
+	reg.Register(hooks.ToolPost, func(_ context.Context, _ hooks.Event) error {
+		postFired = true
+		return nil
+	})
+
+	rec := &captureRecorder{}
+	ex := tools.NewExecutor(rec, nil).WithHooks(reg)
+	ft := &fakeTool{name: "bash", resp: tools.NewTextResponse("should not run")}
+
+	resp, err := ex.Execute(context.Background(), ft, tools.ToolCall{ID: "c1", Name: "bash", Input: "{}"})
+	if !errors.Is(err, vetoErr) {
+		t.Fatalf("expected the veto error, got %v", err)
+	}
+	if ft.gotExecID != "" {
+		t.Fatalf("tool.Run must not execute when ToolPre vetoes, got exec id %q", ft.gotExecID)
+	}
+	if resp.Content != "" {
+		t.Fatalf("expected an empty response on veto, got %q", resp.Content)
+	}
+	if postFired {
+		t.Fatal("ToolPost must not fire for a vetoed call")
+	}
+	if rec.starts != 0 || rec.fins != 0 {
+		t.Fatalf("a vetoed call should not be recorded as started/finished: starts=%d fins=%d", rec.starts, rec.fins)
+	}
+}
+
+func TestExecutorNilHooksRunsToolNormally(t *testing.T) {
+	ex := tools.NewExecutor(nil, nil)
+	ft := &fakeTool{name: "ls", resp: tools.NewTextResponse("ok")}
+	resp, err := ex.Execute(context.Background(), ft, tools.ToolCall{ID: "c", Name: "ls", Input: "{}"})
+	if err != nil || resp.Content != "ok" {
+		t.Fatalf("nil hooks should still run tool: resp=%q err=%v", resp.Content, err)
 	}
 }
 
