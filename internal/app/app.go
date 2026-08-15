@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/cost"
 	"github.com/aux-ai/aux-cli/internal/dashboard"
 	"github.com/aux-ai/aux-cli/internal/db"
+	"github.com/aux-ai/aux-cli/internal/eval"
 	"github.com/aux-ai/aux-cli/internal/eventstore"
 	"github.com/aux-ai/aux-cli/internal/format"
 	"github.com/aux-ai/aux-cli/internal/govpolicy"
@@ -34,6 +36,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
+	"github.com/aux-ai/aux-cli/internal/relatedproject"
 	"github.com/aux-ai/aux-cli/internal/session"
 	"github.com/aux-ai/aux-cli/internal/skill"
 	"github.com/aux-ai/aux-cli/internal/task"
@@ -65,6 +68,7 @@ type App struct {
 	Checkpoints     *checkpoint.Service
 	CheckpointStore *checkpoint.Store
 	Hooks           *hooks.Registry
+	RelatedProjects *relatedproject.Store
 
 	CoderAgent agent.Service
 	Dashboard  *dashboard.Server
@@ -93,8 +97,9 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	memories := memory.NewService(memory.NewStore(conn), events)
 	validations := validation.NewService(validation.NewStore(conn), events)
 	hookRegistry := hooks.NewRegistry()
+	relatedStore := relatedproject.NewStore(conn)
 	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory()).
-		WithMemory(memories).WithValidation(validations).WithHooks(hookRegistry)
+		WithMemory(memories).WithValidation(validations).WithHooks(hookRegistry).WithRelatedProjects(relatedStore)
 	// Content-addressed artifact store, with bytes under the app data directory.
 	artifacts := artifact.NewService(
 		artifact.NewFSBackend(filepath.Join(config.Get().Data.Directory, "artifacts")),
@@ -141,6 +146,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Checkpoints:     checkpoints,
 		CheckpointStore: checkpointStore,
 		Hooks:           hookRegistry,
+		RelatedProjects: relatedStore,
 		LSPClients:      make(map[string]*lsp.Client),
 	}
 
@@ -181,7 +187,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		GovernorMode: cost.GovernorMode(config.Get().CostGovernor.Mode),
 	}
 	coderTools := append(
-		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients),
+		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients, app.Hooks, app.Impact),
 		artifact.NewViewTool(app.Artifacts),
 	)
 	app.CoderAgent, err = agent.NewAgent(config.AgentCoder, coderDeps, coderTools)
@@ -210,6 +216,23 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 			Pages:       app.Pages,
 			Ledger:      app.Cost,
 		},
+		Project: viewmodel.ProjectStores{
+			Projects: app.Projects,
+			Profiles: app.Profiles,
+			Related:  app.RelatedProjects,
+		},
+		Memory: viewmodel.MemoryStores{
+			Memories: memory.NewStore(conn),
+			Skills:   app.Skills,
+		},
+		Impact: viewmodel.ImpactStores{
+			Impact: impact.NewStore(conn),
+		},
+		Optimization: viewmodel.OptimizationStores{
+			Experiments: eval.NewExperimentStore(conn),
+			Policies:    app.Policies,
+		},
+		Workdir: config.WorkingDirectory(),
 	}, dashboardOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start dashboard: %w", err)
@@ -248,6 +271,80 @@ func (app *App) resolveProject(ctx context.Context) {
 	} else {
 		logging.Debug("built impact graph", "nodes", n)
 	}
+
+	// Derive related-project edges from module dependencies (roadmapplan.md
+	// §11.2). Best-effort and Go-only for now; a dependency only becomes an edge
+	// when it resolves to another project Aux already knows about locally.
+	app.deriveRelatedProjects(ctx, res)
+}
+
+// deriveRelatedProjects reads this project's go.mod, matches its dependencies
+// against the module paths of other known projects' roots, and records any
+// matches as related-project edges. A dependency that doesn't resolve to a
+// locally-known project is skipped rather than guessed at.
+func (app *App) deriveRelatedProjects(ctx context.Context, res project.Resolution) {
+	defer logging.RecoverPanic("app.deriveRelatedProjects", nil)
+	if app.RelatedProjects == nil {
+		return
+	}
+	goMod, ok := readGoMod(res.Root.CanonicalPath)
+	if !ok {
+		return
+	}
+	ownModulePath, deps := relatedproject.ParseGoModDeps(goMod)
+	if ownModulePath == "" || len(deps) == 0 {
+		return
+	}
+
+	all, err := app.Projects.Store().ListProjects(ctx)
+	if err != nil {
+		logging.Warn("failed to list projects for related-project derivation", "error", err)
+		return
+	}
+	knownByModule := make(map[string]string)
+	for _, p := range all {
+		if p.ID == res.Project.ID {
+			continue
+		}
+		roots, rerr := app.Projects.Store().ListRoots(ctx, p.ID)
+		if rerr != nil {
+			continue
+		}
+		for _, root := range roots {
+			mod, ok := readGoMod(root.CanonicalPath)
+			if !ok {
+				continue
+			}
+			if mp, _ := relatedproject.ParseGoModDeps(mod); mp != "" {
+				knownByModule[mp] = p.ID
+				break
+			}
+		}
+	}
+	if len(knownByModule) == 0 {
+		return
+	}
+
+	relations := relatedproject.DeriveFromModules(res.Project.ID, ownModulePath, deps, knownByModule)
+	for _, r := range relations {
+		if err := app.RelatedProjects.Add(ctx, r); err != nil {
+			logging.Warn("failed to record related-project edge", "error", err, "to", r.ToProject)
+		}
+	}
+	if len(relations) > 0 {
+		logging.Debug("derived related-project edges", "count", len(relations))
+	}
+}
+
+// readGoMod reads go.mod from a project root, returning ok=false when absent
+// or unreadable (non-Go projects, permission errors) so callers can skip
+// derivation cleanly rather than treating it as a hard failure.
+func readGoMod(root string) (string, bool) {
+	b, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
 }
 
 // initTheme sets the application theme based on the configuration

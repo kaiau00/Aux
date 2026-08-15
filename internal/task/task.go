@@ -59,6 +59,10 @@ type Task struct {
 	CreatedAt         int64
 	StartedAt         int64
 	FinishedAt        int64
+	// ParentTaskID links a child task to the task that spawned it: a multi-repo
+	// child spec (roadmapplan.md §11.4) or a subagent's own task (§11.3). Empty
+	// for an ordinary top-level task.
+	ParentTaskID string
 }
 
 // Criterion is one acceptance criterion with proof-of-done state.

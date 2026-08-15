@@ -15,11 +15,18 @@ import (
 	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/memory"
+	"github.com/aux-ai/aux-cli/internal/multirepo"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
+	"github.com/aux-ai/aux-cli/internal/relatedproject"
 	"github.com/aux-ai/aux-cli/internal/validation"
 )
+
+// RelatedProjectReader looks up outgoing related-project edges for a project.
+type RelatedProjectReader interface {
+	From(ctx context.Context, projectID string) ([]relatedproject.Relation, error)
+}
 
 // FileLister lists the recorded file versions for a session (history service).
 type FileLister interface {
@@ -60,6 +67,7 @@ type Coordinator struct {
 	history     FileLister
 	checkpoints CheckpointCreator
 	hooks       *hooks.Registry
+	related     RelatedProjectReader
 	workdir     string
 
 	mu     sync.Mutex
@@ -101,6 +109,14 @@ func (c *Coordinator) WithHooks(r *hooks.Registry) *Coordinator {
 	return c
 }
 
+// WithRelatedProjects attaches the related-project graph so a task's manifest
+// includes the projects it depends on or is consumed by (roadmapplan.md §11.2).
+// Optional.
+func (c *Coordinator) WithRelatedProjects(r RelatedProjectReader) *Coordinator {
+	c.related = r
+	return c
+}
+
 func (c *Coordinator) resolution(ctx context.Context) (project.Resolution, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -117,12 +133,25 @@ func (c *Coordinator) resolution(ctx context.Context) (project.Resolution, error
 
 // Begin resolves the project, compiles the effective profile and a task spec,
 // persists the task/spec/budget, emits task lifecycle events, and returns a
-// context carrying the task and project ids for downstream correlation.
+// context carrying the task and project ids for downstream correlation. When
+// ctx carries a tools.ParentTaskIDContextKey (set by the agent tool before
+// spawning a subagent, roadmapplan.md §11.3), the new task is linked as that
+// task's child rather than starting a fresh top-level task tree.
 func (c *Coordinator) Begin(ctx context.Context, sessionID, objective string) (context.Context, string, error) {
 	res, err := c.resolution(ctx)
 	if err != nil {
 		return ctx, "", err
 	}
+	parentTaskID, _ := ctx.Value(tools.ParentTaskIDContextKey).(string)
+	return c.beginWithParent(ctx, sessionID, objective, res, parentTaskID)
+}
+
+// beginWithParent is Begin's implementation, generalized to (a) an explicit
+// project resolution rather than the coordinator's own cached one, and (b) an
+// optional parent task id. It backs both Begin (res = the coordinator's own
+// project, no parent) and BeginMultiRepo (one call per child repository,
+// parent = the multi-repo parent task).
+func (c *Coordinator) beginWithParent(ctx context.Context, sessionID, objective string, res project.Resolution, parentTaskID string) (context.Context, string, error) {
 	eff, err := c.profiles.CompileEffective(ctx, res.Project.ID, res.Revision.ID, res.Root.CanonicalPath, res.Revision.VCSRevision, "")
 	if err != nil {
 		return ctx, "", err
@@ -145,6 +174,7 @@ func (c *Coordinator) Begin(ctx context.Context, sessionID, objective string) (c
 		Mode:              mode,
 		Status:            StatusCompiled,
 		CreatedAt:         now,
+		ParentTaskID:      parentTaskID,
 	}
 	if err := c.store.CreateTask(ctx, t); err != nil {
 		return ctx, "", err
@@ -166,11 +196,65 @@ func (c *Coordinator) Begin(ctx context.Context, sessionID, objective string) (c
 	ctx = context.WithValue(ctx, tools.TaskIDContextKey, taskID)
 	ctx = context.WithValue(ctx, tools.ProjectIDContextKey, res.Project.ID)
 	_ = c.hooks.Dispatch(ctx, hooks.Event{Point: hooks.TaskBegin, TaskID: taskID, SessionID: sessionID})
-	// Offer the compiled project manifest (plus any relevant prior memory) and the
-	// task spec to the prompt compiler as available context pages (§7.1, §8.4).
-	manifest := eff.Manifest + c.memorySection(ctx, res.Project.ID)
+	// Offer the compiled project manifest (plus any relevant prior memory and
+	// related-project context) and the task spec to the prompt compiler as
+	// available context pages (§7.1, §8.4, §11.2).
+	manifest := eff.Manifest + c.memorySection(ctx, res.Project.ID) + c.relatedSection(ctx, res.Project.ID)
 	ctx = promptcompiler.WithProjectContext(ctx, manifest, spec.RenderText())
 	return ctx, taskID, nil
+}
+
+// BeginMultiRepo compiles a product objective into a parent task (in the
+// coordinator's own project) plus one child task per repository target, each
+// bound to its own project so it resolves that project's own profile and
+// working set (roadmapplan.md §11.4). Children are linked to the parent via
+// ParentTaskID. A target with no resolvable root, or a child that fails to
+// begin, is recorded as an error but does not stop the remaining children —
+// the caller sees exactly which repositories are ready to work and which are
+// not, rather than losing the whole multi-repo task to one bad target.
+func (c *Coordinator) BeginMultiRepo(ctx context.Context, sessionID, objective string, targets []multirepo.RepoTarget) (multirepo.ParentPlan, []Task, error) {
+	plan := multirepo.Compile(objective, targets)
+
+	parentRes, err := c.resolution(ctx)
+	if err != nil {
+		return plan, nil, fmt.Errorf("failed to resolve parent project: %w", err)
+	}
+	_, parentTaskID, err := c.beginWithParent(ctx, sessionID, objective, parentRes, "")
+	if err != nil {
+		return plan, nil, fmt.Errorf("failed to begin parent task: %w", err)
+	}
+
+	rootByProject := make(map[string]string, len(targets))
+	for _, tgt := range targets {
+		rootByProject[tgt.ProjectID] = tgt.Root
+	}
+
+	var children []Task
+	var errs []error
+	for _, child := range plan.Children {
+		root, ok := rootByProject[child.ProjectID]
+		if !ok || root == "" {
+			errs = append(errs, fmt.Errorf("no root configured for target project %s", child.ProjectID))
+			continue
+		}
+		childRes, err := c.resolver.Resolve(ctx, root)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to resolve child project at %s: %w", root, err))
+			continue
+		}
+		_, childTaskID, err := c.beginWithParent(ctx, sessionID, child.Objective, childRes, parentTaskID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to begin child task for project %s: %w", child.ProjectID, err))
+			continue
+		}
+		childTask, err := c.store.GetTask(ctx, childTaskID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to load child task %s: %w", childTaskID, err))
+			continue
+		}
+		children = append(children, childTask)
+	}
+	return plan, children, errors.Join(errs...)
 }
 
 // memorySection renders a bounded set of active memories for the manifest, so
@@ -187,6 +271,26 @@ func (c *Coordinator) memorySection(ctx context.Context, projectID string) strin
 	b.WriteString("Prior knowledge:\n")
 	for _, m := range mems {
 		fmt.Fprintf(&b, "  - [%s] %s\n", m.Type, m.StableKey)
+	}
+	return b.String()
+}
+
+// relatedSection renders the projects this project depends on (or is consumed
+// by), so cross-project work can be recognized without rediscovering the graph
+// each time (roadmapplan.md §11.2). Each edge preserves the related project's
+// own identity; nothing here merges symbols across projects.
+func (c *Coordinator) relatedSection(ctx context.Context, projectID string) string {
+	if c.related == nil {
+		return ""
+	}
+	rels, err := c.related.From(ctx, projectID)
+	if err != nil || len(rels) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Related projects:\n")
+	for _, r := range rels {
+		fmt.Fprintf(&b, "  - [%s] %s (via %s)\n", r.RelationType, r.ToProject, r.Source)
 	}
 	return b.String()
 }

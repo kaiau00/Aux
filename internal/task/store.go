@@ -30,10 +30,10 @@ func nullable(s string) any {
 // CreateTask inserts a new task.
 func (s *Store) CreateTask(ctx context.Context, t Task) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tasks (task_id, project_id, session_id, project_revision_id, profile_version_set, objective, mode, status, outcome, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO tasks (task_id, project_id, session_id, project_revision_id, profile_version_set, objective, mode, status, outcome, created_at, parent_task_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, nullable(t.ProjectID), t.SessionID, t.ProjectRevisionID, t.ProfileVersionSet,
-		t.Objective, string(t.Mode), string(t.Status), t.Outcome, t.CreatedAt)
+		t.Objective, string(t.Mode), string(t.Status), t.Outcome, t.CreatedAt, nullable(t.ParentTaskID))
 	if err != nil {
 		return fmt.Errorf("failed to create task: %w", err)
 	}
@@ -151,8 +151,28 @@ func (s *Store) ListRecent(ctx context.Context, limit int) ([]Task, error) {
 	return out, rows.Err()
 }
 
+// ListByParent returns a task's child tasks (multi-repo children per §11.4, or
+// subagent tasks per §11.3), oldest first.
+func (s *Store) ListByParent(ctx context.Context, parentTaskID string) ([]Task, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+taskCols+` FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC`, parentTaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Task
+	for rows.Next() {
+		tk, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
 const taskCols = `task_id, project_id, session_id, project_revision_id, profile_version_set,
-    objective, mode, status, outcome, created_at, started_at, finished_at`
+    objective, mode, status, outcome, created_at, started_at, finished_at, parent_task_id`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -160,11 +180,11 @@ type scanner interface {
 
 func scanTask(row scanner) (Task, error) {
 	var t Task
-	var projectID sql.NullString
+	var projectID, parentTaskID sql.NullString
 	var startedAt, finishedAt sql.NullInt64
 	var mode, status string
 	if err := row.Scan(&t.ID, &projectID, &t.SessionID, &t.ProjectRevisionID, &t.ProfileVersionSet,
-		&t.Objective, &mode, &status, &t.Outcome, &t.CreatedAt, &startedAt, &finishedAt); err != nil {
+		&t.Objective, &mode, &status, &t.Outcome, &t.CreatedAt, &startedAt, &finishedAt, &parentTaskID); err != nil {
 		return Task{}, err
 	}
 	t.ProjectID = projectID.String
@@ -172,5 +192,6 @@ func scanTask(row scanner) (Task, error) {
 	t.Status = Status(status)
 	t.StartedAt = startedAt.Int64
 	t.FinishedAt = finishedAt.Int64
+	t.ParentTaskID = parentTaskID.String
 	return t, nil
 }
