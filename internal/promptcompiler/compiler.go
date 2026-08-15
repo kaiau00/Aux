@@ -77,6 +77,11 @@ type Input struct {
 	// pages so the manifest shows what is known but not sent.
 	ProjectManifest string
 	TaskSpecText    string
+	// ExcludedToolCallIDs are tool-result parts to stub out of the compiled
+	// prompt (roadmapplan.md §13.11): the TUI's cross-off control changes what
+	// is actually sent to the model, not just how it's displayed. Keyed by
+	// message.ToolResult.ToolCallID. Nil/empty is a no-op.
+	ExcludedToolCallIDs map[string]bool
 }
 
 // Compiler produces a CompiledPrompt from durable state. It is a pure function of
@@ -96,6 +101,7 @@ func NewCompatibilityCompiler() *CompatibilityCompiler { return &CompatibilityCo
 // legacy prompt path.
 func (c *CompatibilityCompiler) Compile(in Input) CompiledPrompt {
 	msgs := cleanMessages(in.History)
+	msgs = applyExclusions(msgs, in.ExcludedToolCallIDs)
 	est := EstimateMessages(msgs)
 	prefix := stablePrefixID(in.Tools)
 	pages := decomposePages(in, msgs)
@@ -194,6 +200,50 @@ func hashString(s string) string {
 }
 
 func estimateText(s string) int64 { return int64(len(s)+3) / 4 }
+
+// applyExclusions replaces the content of excluded tool-result parts with a
+// compact stub, leaving message/part structure (and tool_call/tool_result
+// pairing) intact — the same shape dedupRepeatedContent uses for repeated
+// content. This is what makes the TUI's cross-off control a real content
+// change rather than a display-only checkbox (roadmapplan.md §13.11).
+func applyExclusions(msgs []message.Message, excluded map[string]bool) []message.Message {
+	if len(excluded) == 0 {
+		return msgs
+	}
+	out := make([]message.Message, len(msgs))
+	for mi, m := range msgs {
+		newParts := make([]message.ContentPart, len(m.Parts))
+		copy(newParts, m.Parts)
+		changed := false
+		for pi, part := range m.Parts {
+			tr, ok := part.(message.ToolResult)
+			if !ok || !excluded[tr.ToolCallID] {
+				continue
+			}
+			newParts[pi] = message.ToolResult{
+				ToolCallID: tr.ToolCallID,
+				Name:       tr.Name,
+				Content:    excludedStub(len(tr.Content)),
+				Metadata:   tr.Metadata,
+				IsError:    tr.IsError,
+			}
+			changed = true
+		}
+		if !changed {
+			out[mi] = m
+			continue
+		}
+		out[mi] = message.Message{
+			ID: m.ID, Role: m.Role, SessionID: m.SessionID, Parts: newParts,
+			Model: m.Model, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt,
+		}
+	}
+	return out
+}
+
+func excludedStub(n int) string {
+	return fmt.Sprintf("[excluded from context by user; %d bytes omitted]", n)
+}
 
 // cleanMessages drops messages with no content parts, matching provider behaviour.
 func cleanMessages(in []message.Message) []message.Message {

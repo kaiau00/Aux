@@ -79,6 +79,52 @@ func TestCompilerPreservesToolCallResultOrder(t *testing.T) {
 	}
 }
 
+func TestCompatibilityCompilerAppliesExclusions(t *testing.T) {
+	c := promptcompiler.NewCompatibilityCompiler()
+	out := c.Compile(promptcompiler.Input{History: history(), ExcludedToolCallIDs: map[string]bool{"c1": true}})
+
+	var result message.ToolResult
+	found := false
+	for _, m := range out.Messages {
+		for _, r := range m.ToolResults() {
+			if r.ToolCallID == "c1" {
+				result, found = r, true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("excluded tool result should still be present, just stubbed")
+	}
+	if result.Content == "match" {
+		t.Fatal("excluded tool result content must not reach the compiled prompt")
+	}
+	if len(out.Messages) != len(history()) {
+		t.Fatalf("exclusion must stub content, not drop messages: got %d messages, want %d", len(out.Messages), len(history()))
+	}
+}
+
+func TestCompilerWithoutExclusionsIsUnaffected(t *testing.T) {
+	c := promptcompiler.NewCompatibilityCompiler()
+	in := history()
+	out := c.Compile(promptcompiler.Input{History: in, ExcludedToolCallIDs: nil})
+	if !reflect.DeepEqual(out.Messages, in) {
+		t.Fatal("nil exclusions must not alter the compiled prompt")
+	}
+}
+
+func TestPagingCompilerAppliesExclusions(t *testing.T) {
+	c := promptcompiler.NewPagingCompiler()
+	out := c.Compile(promptcompiler.Input{History: history(), ExcludedToolCallIDs: map[string]bool{"c1": true}})
+
+	for _, m := range out.Messages {
+		for _, r := range m.ToolResults() {
+			if r.ToolCallID == "c1" && r.Content == "match" {
+				t.Fatal("excluded tool result content must not reach the paging-compiled prompt")
+			}
+		}
+	}
+}
+
 func TestCompileDecomposesIntoPages(t *testing.T) {
 	c := promptcompiler.NewCompatibilityCompiler()
 	in := promptcompiler.Input{

@@ -104,6 +104,60 @@ func (s *Store) RecordAccess(ctx context.Context, taskID, callID, pageVersionID,
 	return nil
 }
 
+// Exclude marks a tool call's result as excluded from a task's future prompt
+// compiles (roadmapplan.md §13.11): the TUI's cross-off control changes what
+// is actually sent to the model on the next turn, not just how it's
+// displayed. Idempotent.
+func (s *Store) Exclude(ctx context.Context, taskID, toolCallID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO context_exclusions (id, task_id, tool_call_id, created_at) VALUES (?,?,?,?)`,
+		ids.New(), taskID, toolCallID, time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("failed to exclude tool call: %w", err)
+	}
+	return nil
+}
+
+// Include clears a single previously recorded exclusion (the TUI's un-cross
+// control). Not an error if none existed.
+func (s *Store) Include(ctx context.Context, taskID, toolCallID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM context_exclusions WHERE task_id = ? AND tool_call_id = ?`, taskID, toolCallID)
+	if err != nil {
+		return fmt.Errorf("failed to include tool call: %w", err)
+	}
+	return nil
+}
+
+// ClearExclusions clears every exclusion for a task (the TUI's "clear
+// crossed" control).
+func (s *Store) ClearExclusions(ctx context.Context, taskID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM context_exclusions WHERE task_id = ?`, taskID)
+	if err != nil {
+		return fmt.Errorf("failed to clear exclusions: %w", err)
+	}
+	return nil
+}
+
+// Exclusions returns the set of tool-call ids excluded from a task's next
+// prompt compile.
+func (s *Store) Exclusions(ctx context.Context, taskID string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT tool_call_id FROM context_exclusions WHERE task_id = ?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // BindingsForCall returns the page bindings of a model call, joined with page
 // identity, ordered by state then rank. This is the "explain page by page" read.
 func (s *Store) BindingsForCall(ctx context.Context, callID string) ([]BoundPage, error) {

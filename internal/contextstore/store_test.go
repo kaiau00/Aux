@@ -89,3 +89,62 @@ func TestRecordAccess(t *testing.T) {
 		t.Fatalf("RecordAccess: %v", err)
 	}
 }
+
+func TestExcludeIncludeAndClear(t *testing.T) {
+	store := contextstore.NewStore(dbtest.New(t))
+	ctx := context.Background()
+
+	if err := store.Exclude(ctx, "task-1", "call-a"); err != nil {
+		t.Fatalf("Exclude: %v", err)
+	}
+	if err := store.Exclude(ctx, "task-1", "call-b"); err != nil {
+		t.Fatalf("Exclude: %v", err)
+	}
+	// A second exclude of the same (task, call) is idempotent.
+	if err := store.Exclude(ctx, "task-1", "call-a"); err != nil {
+		t.Fatalf("Exclude (repeat): %v", err)
+	}
+	// Excluding under a different task must not interfere.
+	if err := store.Exclude(ctx, "task-2", "call-a"); err != nil {
+		t.Fatalf("Exclude (other task): %v", err)
+	}
+
+	excl, err := store.Exclusions(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("Exclusions: %v", err)
+	}
+	if len(excl) != 2 || !excl["call-a"] || !excl["call-b"] {
+		t.Fatalf("unexpected exclusions: %+v", excl)
+	}
+
+	if err := store.Include(ctx, "task-1", "call-a"); err != nil {
+		t.Fatalf("Include: %v", err)
+	}
+	excl, err = store.Exclusions(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("Exclusions after Include: %v", err)
+	}
+	if len(excl) != 1 || excl["call-a"] {
+		t.Fatalf("Include did not clear call-a: %+v", excl)
+	}
+
+	if err := store.ClearExclusions(ctx, "task-1"); err != nil {
+		t.Fatalf("ClearExclusions: %v", err)
+	}
+	excl, err = store.Exclusions(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("Exclusions after Clear: %v", err)
+	}
+	if len(excl) != 0 {
+		t.Fatalf("expected no exclusions after Clear, got %+v", excl)
+	}
+
+	// task-2's exclusion must be unaffected by task-1's Clear.
+	other, err := store.Exclusions(ctx, "task-2")
+	if err != nil {
+		t.Fatalf("Exclusions(task-2): %v", err)
+	}
+	if len(other) != 1 || !other["call-a"] {
+		t.Fatalf("expected task-2 exclusion to survive task-1's clear: %+v", other)
+	}
+}

@@ -436,13 +436,18 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// manifest is recorded for inspection and reconciliation.
 	corr := tools.CorrelationFromContext(ctx)
 	projectManifest, taskSpecText := promptcompiler.ProjectContextFromContext(ctx)
+	var excluded map[string]bool
+	if a.pages != nil && corr.TaskID != "" {
+		excluded, _ = a.pages.Exclusions(ctx, corr.TaskID)
+	}
 	compiled := a.compiler.Compile(promptcompiler.Input{
-		TaskID:          corr.TaskID,
-		CallID:          tracker.id,
-		History:         msgHistory,
-		Tools:           a.tools,
-		ProjectManifest: projectManifest,
-		TaskSpecText:    taskSpecText,
+		TaskID:              corr.TaskID,
+		CallID:              tracker.id,
+		History:             msgHistory,
+		Tools:               a.tools,
+		ProjectManifest:     projectManifest,
+		TaskSpecText:        taskSpecText,
+		ExcludedToolCallIDs: excluded,
 	})
 	resident, available := a.bindPages(ctx, corr.TaskID, tracker.id, compiled)
 	a.emit(ctx, eventstore.Append{

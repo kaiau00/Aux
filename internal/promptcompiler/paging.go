@@ -28,6 +28,7 @@ func (c *PagingCompiler) Compile(in Input) CompiledPrompt {
 	fullEst := EstimateMessages(original)
 
 	deduped := dedupRepeatedContent(original)
+	deduped = applyExclusions(deduped, in.ExcludedToolCallIDs)
 	est := EstimateMessages(deduped)
 	prefix := stablePrefixID(in.Tools)
 
