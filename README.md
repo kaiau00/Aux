@@ -195,11 +195,17 @@ Hotkeys are suppressed while the editor is focused, so `x`/`u`/`c`/`p`/`e`/`d`/`
 | `↑` / `k` | Move selection up |
 | `↓` / `j` | Move selection down |
 | `x` | Cross off the selected entry — excludes it from the task's next prompt compile, not just the display |
-| `u` | Un-cross the selected entry |
+| `u` | Un-cross the selected entry (also restores one the agent dropped itself) |
 | `c` | Clear all crossed-off entries |
 | `p` | Toggle pin on the selected entry — guarantees its full content on the next compile, exempt from both exclusion and dedup stubbing |
 | `e` | Toggle the expanded context view (grouped by resident/available/pinned/evicted/faulted) |
 | `d` | Reveal/hide the full dashboard URL (collapsed to a one-line status by default) |
+
+The agent can also drop files from its own context once it is done with them
+(the `context_exclude` tool). Those entries appear crossed off with a distinct
+marker, so you can see what it discarded and press `u` to put any of it back.
+The `exclude` command (via `Ctrl+K`) does the same thing by path, for files that
+are not currently on screen.
 
 ### Editor
 

@@ -22,6 +22,20 @@ to promote without a passing evaluation (`skill.Service.Promote` →
 `ErrNoEvaluationEvidence`), and proof-of-done never marks a criterion validated
 without a passing run.
 
+Skill candidates are now produced automatically: a completed task proposes one
+from the commands it actually validated (`skill.Extract`, called from
+`task.Coordinator.proposeSkills`). Until this landed the candidate pipeline had
+no production caller, so no task had ever produced a skill. Extraction is
+deterministic and narrow — a command either passed during that task or it does
+not appear — and candidates stay inert until the gate above is satisfied.
+
+**What still does not exist is the task-level benchmark.** `aux eval compiler`
+compares prompt compilers over fixtures; it does not measure whether a change
+helps on real work. Every token and latency claim about this project is
+unfalsifiable until a 20–30 task suite with recorded baselines exists, and two
+things are explicitly blocked on it: promoting any auto-extracted skill, and
+flipping demand paging's default to on.
+
 ## Live gates (opt-in, require credentials + budget)
 
 Run these only with a configured provider and an explicit opt-in, on a machine
@@ -139,6 +153,11 @@ not just present as an isolated, tested package:
   page's full content is guaranteed in the next compile, exempt from both
   exclusion and dedup stubbing. Reload remains the one control from the
   plan's "pin/exclude/reload" phrasing that does not exist.
+  The agent can now reach the same exclusion itself
+  (`tools.NewContextExcludeTool`, path-based), which matters because it is the
+  party generating the context; pages it drops are marked distinctly in the
+  pane so the user can see and undo them, and an `exclude` command applies the
+  same action by path.
 - **§13.18 accessibility** — icons fall back to ASCII when the terminal is
   detected as ASCII-only (`internal/tui/styles.SupportsUnicode`, explicit
   override via `AUX_ASCII_ICONS`). All 9 registered themes now have a
