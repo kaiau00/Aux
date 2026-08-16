@@ -47,6 +47,10 @@ type fixture struct {
 	changes    viewmodel.ChangeSummaryVM
 	validation viewmodel.ValidationSummaryVM
 	budget     viewmodel.ContextBudgetVM
+	// pageList drives the expanded context view (the Expand hotkey). When set,
+	// the snapshot covers RenderExpanded instead of the compact budget, so the
+	// expanded surface is regression-tested too.
+	pageList *viewmodel.ContextPageListVM
 }
 
 // render composes every present surface at the given width into one snapshot.
@@ -65,7 +69,12 @@ func (f fixture) render(width int) string {
 		b.WriteString("\n\n")
 		b.WriteString(s)
 	}
-	if s := plain(contextbudget.Render(f.budget, width)); s != "" {
+	if f.pageList != nil {
+		if s := plain(contextbudget.RenderExpanded(*f.pageList, width)); s != "" {
+			b.WriteString("\n\n")
+			b.WriteString(s)
+		}
+	} else if s := plain(contextbudget.Render(f.budget, width)); s != "" {
 		b.WriteString("\n\n")
 		b.WriteString(s)
 	}
@@ -74,6 +83,24 @@ func (f fixture) render(width int) string {
 
 func fixtures() map[string]fixture {
 	return map[string]fixture{
+		// The expanded context view (Expand hotkey), grouped by binding state.
+		"context-expanded": {
+			header: viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "implementing", State: viewmodel.StateActive, Model: "Opus", ContextLimit: 64000},
+			pageList: &viewmodel.ContextPageListVM{
+				Resident: []viewmodel.ContextPageEntryVM{
+					{PageType: "file_region", StableKey: "file:internal/app/app.go", State: "resident", Tokens: 1200, Reason: "transcript"},
+				},
+				Pinned: []viewmodel.ContextPageEntryVM{
+					{PageType: "file_region", StableKey: "file:internal/task/coordinator.go", State: "pinned", Tokens: 900, Reason: "pinned by user"},
+				},
+				Available: []viewmodel.ContextPageEntryVM{
+					{PageType: "project_manifest", StableKey: "project_manifest", State: "available", Tokens: 300},
+				},
+				Evicted: []viewmodel.ContextPageEntryVM{
+					{PageType: "tool_digest", StableKey: "msg:tool-7", State: "evicted", Tokens: 4200, Reason: "demand paging"},
+				},
+			},
+		},
 		"empty-project": {
 			header:     viewmodel.TaskHeaderVM{Project: "aux-cli", Stage: "idle", State: viewmodel.StateWaiting, Model: "Opus", ContextLimit: 64000},
 			validation: viewmodel.BuildValidationSummary(nil),

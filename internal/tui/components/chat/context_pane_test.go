@@ -8,6 +8,7 @@ import (
 	"github.com/aux-ai/aux-cli/internal/app"
 	"github.com/aux-ai/aux-cli/internal/contextstore"
 	"github.com/aux-ai/aux-cli/internal/db/dbtest"
+	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -200,5 +201,25 @@ func TestToggleCrossWithoutTaskDoesNotPanic(t *testing.T) {
 	m.toggleCross(true) // no Pages, no taskID: must be a safe no-op beyond local state
 	if !m.entries[0].CrossedOff {
 		t.Fatal("local state should still update even without a wired store")
+	}
+}
+
+func TestRenderRowMarksPinnedEntries(t *testing.T) {
+	// The pin marker is the only on-screen difference between a pinned page
+	// and an ordinary one, so it needs its own guard.
+	m := NewContextPaneCmp(&app.App{})
+	m.width = 60
+
+	plain := m.renderRow(ContextEntry{Path: "a.go", Lines: 10}, false, 60)
+	pinned := m.renderRow(ContextEntry{Path: "a.go", Lines: 10, Pinned: true}, false, 60)
+
+	if plain == pinned {
+		t.Fatal("a pinned entry must render differently from an unpinned one")
+	}
+	if !strings.Contains(pinned, styles.PinIcon) {
+		t.Fatalf("pinned row should carry the pin icon %q, got %q", styles.PinIcon, pinned)
+	}
+	if strings.Contains(plain, styles.PinIcon) {
+		t.Fatalf("unpinned row must not show a pin icon, got %q", plain)
 	}
 }

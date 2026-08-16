@@ -11,10 +11,11 @@ normal tests or CI — the whole suite is deterministic and offline).
 
 These run offline, with no credentials, and are covered by tests:
 
-- `aux eval` — prompt-compiler evaluation (control vs optimized) on baseline fixtures.
+- `aux eval compiler` — prompt-compiler evaluation (control vs optimized) on baseline fixtures.
 - `aux eval experiment` — runs and persists the compiler experiment (compatibility vs paging); records evidence before any default changes.
 - `aux eval replay <task-id>` — deterministically reconstructs a task's state from its durable events (no provider calls).
 - `aux cost <task-id>` — a task's budget usage, trajectory, and waste warnings.
+- `aux validate <task-id>` — runs the project's own validation commands and records proof-of-done evidence (needs `--yes` to approve them).
 
 Evaluation-gated promotion is already enforced in code and tested: skills refuse
 to promote without a passing evaluation (`skill.Service.Promote` →
@@ -89,20 +90,30 @@ not just present as an isolated, tested package:
   `internal/llm/agent/subtask.go`) with role-specific tools/prompts, and
   report back through a structured `report` tool instead of free text.
   `SubtaskBegin`/`SubtaskEnd` hooks fire around every subagent invocation.
-  **Not done**: git worktree isolation (`internal/worktree` is built and
-  tested standalone, but not wired into live tool execution — every tool in
-  this codebase reads a single process-global working directory, so wiring
-  worktrees in safely requires making tool path resolution instance-scoped
-  across ~9 tool files, a separate, larger refactor with its own risk).
-  Because of that, subagent tool sets also stay read-only (plus Bash only for
-  the validation-runner role) — no role gets Edit/Write, so there is
-  currently nothing that would need write-set isolation anyway.
+  Git worktree isolation is now wired: the validation-runner role (the only
+  role with Bash, and so the only one that can cause filesystem side effects)
+  runs in a real `git worktree`, synced with the parent's live uncommitted
+  state so it validates current code rather than the last commit. Tool path
+  resolution became per-call via `tools.WorkingDirContextKey` /
+  `ResolveWorkingDir`, which is what made this possible. Worktrees are torn
+  down with their branch refs after each run. Sibling subagents in the same
+  model turn are checked for overlapping write sets
+  (`checkpoint.DetectWriteConflicts`), surfaced to the parent as a risk on
+  the structured report. Subagent tool sets remain read-only apart from that
+  Bash access; note that tool calls execute sequentially, so "siblings" means
+  same-turn, not concurrent.
 - **§11.4 multi-repo child tasks** — `internal/multirepo` compiler, now wired
   into `internal/task/coordinator.go` (`Coordinator.BeginMultiRepo`) and the
   CLI (`aux task begin --repo <path> ... `, `--auto-related`). Previously
   built and tested in isolation only.
-- **§12.3 lifecycle hooks** — `internal/hooks`, dispatched at task boundaries,
-  now also at subtask boundaries (§11.3).
+- **§12.3 lifecycle hooks** — `internal/hooks`, dispatched at task and subtask
+  boundaries (§11.3) and around every tool execution (`ToolPre`/`ToolPost`,
+  from `tools.Executor`; a ToolPre handler can veto the call). Built-in
+  observability handlers are registered in `app.New`
+  (`hooks.RegisterObservability`), so the dispatch points have a real
+  consumer rather than firing into an empty registry. User-defined shell
+  hooks are deliberately still out of scope: running commands from a config
+  file is arbitrary code execution and needs its own security review.
 - **§12.4 runtime adapters** — `internal/runtime` Adapter + `runtimetest`
   conformance contract.
 - **§12.5 shareable bundles** — `internal/bundle` (`aux bundle export|import`);
@@ -124,10 +135,10 @@ not just present as an isolated, tested package:
   binding state) is available via a new Expand key (`e`) in the context pane.
   Narrow terminals (<80 cols) that drop the context panel can reach it again
   via a context drawer (`ctrl+g`), an overlay rather than a lost panel.
-  (Note: the plan referred to this as "pin/exclude/reload," but the TUI never
-  had pin or reload controls — only cross-off/un-cross/clear — so those three
-  were made real rather than inventing new UI for controls that never
-  existed.)
+  Pinning is also real now (`p`, backed by a `context_pins` table): a pinned
+  page's full content is guaranteed in the next compile, exempt from both
+  exclusion and dedup stubbing. Reload remains the one control from the
+  plan's "pin/exclude/reload" phrasing that does not exist.
 - **§13.18 accessibility** — icons fall back to ASCII when the terminal is
   detected as ASCII-only (`internal/tui/styles.SupportsUnicode`, explicit
   override via `AUX_ASCII_ICONS`). All 9 registered themes now have a
@@ -172,3 +183,19 @@ not just present as an isolated, tested package:
   retention** (ADR 0013) are deliberately unimplemented pending real growth
   data from actual usage — not a gap so much as a documented "measure before
   building" decision.
+
+## Security posture (added after the repo-wide audit)
+
+- **Permission grants are per-action.** A session-wide grant is keyed by a
+  fingerprint — the command for Bash, the URL for Fetch — so approving one
+  command never authorizes a different one. Previously the key was
+  (tool, action, directory), and since Bash's directory is constant for a
+  session, one approval silently covered every later command.
+- **Reads outside the working directory prompt.** view/ls/glob/grep resolve
+  through `EvalSymlinks` and compare against the call's working directory;
+  outside reads require approval and fail closed when there is no way to ask.
+- **Validation commands require approval.** They come from the compiled
+  profile, which is derived from repo content, so running them unattended
+  would be arbitrary code execution from a checked-out repository.
+- **The dashboard token is compared in constant time**, and `~/.aux.json`
+  (which holds provider keys) and the debug log are written 0600.
