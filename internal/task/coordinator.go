@@ -14,12 +14,14 @@ import (
 	"github.com/aux-ai/aux-cli/internal/hooks"
 	"github.com/aux-ai/aux-cli/internal/ids"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
+	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/memory"
 	"github.com/aux-ai/aux-cli/internal/multirepo"
 	"github.com/aux-ai/aux-cli/internal/profile"
 	"github.com/aux-ai/aux-cli/internal/project"
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 	"github.com/aux-ai/aux-cli/internal/relatedproject"
+	"github.com/aux-ai/aux-cli/internal/skill"
 	"github.com/aux-ai/aux-cli/internal/validation"
 )
 
@@ -63,6 +65,7 @@ type Coordinator struct {
 	store       *Store
 	events      EventSink
 	memories    *memory.Service
+	skills      *skill.Service
 	validations *validation.Service
 	history     FileLister
 	checkpoints CheckpointCreator
@@ -83,6 +86,15 @@ func NewCoordinator(resolver ProjectResolver, profiles ProfileCompiler, store *S
 // memory candidates and active memories surface as available context. Optional.
 func (c *Coordinator) WithMemory(m *memory.Service) *Coordinator {
 	c.memories = m
+	return c
+}
+
+// WithSkills attaches a skill service so a completed task proposes skill
+// candidates from the commands it validated. Candidates are inert until they
+// pass an evaluation and are promoted, so this never changes agent behaviour on
+// its own. Optional.
+func (c *Coordinator) WithSkills(s *skill.Service) *Coordinator {
+	c.skills = s
 	return c
 }
 
@@ -371,7 +383,7 @@ func toFileVersions(files []history.File) []checkpoint.FileVersion {
 // (roadmapplan.md §8.2). This is safe to run after PR 12; earlier slices
 // generated the evidence memory needs.
 func (c *Coordinator) learnFromTask(ctx context.Context, taskID, outcome string) {
-	if c.memories == nil {
+	if c.memories == nil && c.skills == nil {
 		return
 	}
 	t, err := c.store.GetTask(ctx, taskID)
@@ -387,15 +399,45 @@ func (c *Coordinator) learnFromTask(ctx context.Context, taskID, outcome string)
 	if c.validations != nil {
 		successfulCommands, _ = c.validations.SuccessfulCommands(ctx, t.ID)
 	}
-	_ = c.memories.Learn(ctx, memory.Extract(memory.ExtractInput{
+	if c.memories != nil {
+		_ = c.memories.Learn(ctx, memory.Extract(memory.ExtractInput{
+			ProjectID:          t.ProjectID,
+			TaskID:             t.ID,
+			Objective:          t.Objective,
+			Mode:               string(t.Mode),
+			Outcome:            outcome,
+			SupportingRevision: rev,
+			SuccessfulCommands: successfulCommands,
+		}))
+	}
+
+	c.proposeSkills(ctx, t, successfulCommands)
+}
+
+// proposeSkills records skill candidates from what the task actually validated.
+//
+// The candidate pipeline (candidate -> evaluate -> promote, gated on
+// HasPassingEvaluation) already existed and was already correct; nothing in the
+// product ever called it, so no task had ever produced a skill. This is that
+// call site.
+//
+// Failures are swallowed on purpose: proposing a skill is an optimization, and
+// it must never be able to fail a task that has otherwise succeeded.
+func (c *Coordinator) proposeSkills(ctx context.Context, t Task, successfulCommands []string) {
+	if c.skills == nil {
+		return
+	}
+	in := skill.ExtractInput{
 		ProjectID:          t.ProjectID,
 		TaskID:             t.ID,
 		Objective:          t.Objective,
-		Mode:               string(t.Mode),
-		Outcome:            outcome,
-		SupportingRevision: rev,
 		SuccessfulCommands: successfulCommands,
-	}))
+	}
+	for _, content := range skill.Extract(in) {
+		if _, _, err := c.skills.Candidate(ctx, "project", t.ProjectID, content, "task", skill.SourceIDsFor(in)); err != nil {
+			logging.Debug("skill candidate not recorded", "task", t.ID, "skill", content.Name, "error", err)
+		}
+	}
 }
 
 // Fail marks a task failed or cancelled and emits the corresponding event.

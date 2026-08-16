@@ -46,4 +46,7 @@ var (
 	LoadingIcon  = pickIcon("⟳", "~")
 	DocumentIcon = pickIcon("▤", "#")
 	PinIcon      = pickIcon("★", "*")
+	// AgentDropIcon marks a context page the agent dropped itself, so the user
+	// can tell it apart from one they crossed off and can put it back.
+	AgentDropIcon = pickIcon("⤫", "~")
 )

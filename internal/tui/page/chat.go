@@ -2,6 +2,7 @@ package page
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/aux-ai/aux-cli/internal/app"
@@ -108,6 +109,16 @@ func (p *chatPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			return p, cmd
 		}
+	case chat.ExcludePathMsg:
+		if p.contextPane == nil {
+			return p, nil
+		}
+		if matched := p.contextPane.ExcludePath(msg.Path); matched == 0 {
+			// Reporting the miss matters: a mistyped path would otherwise be
+			// indistinguishable from a successful exclusion.
+			return p, util.ReportWarn(fmt.Sprintf("%s is not in the current context", msg.Path))
+		}
+		return p, util.ReportInfo(fmt.Sprintf("Dropped %s from context", msg.Path))
 	case chat.SessionSelectedMsg:
 		p.session = msg
 	case tea.KeyMsg:

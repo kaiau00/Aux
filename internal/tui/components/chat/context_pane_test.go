@@ -223,3 +223,80 @@ func TestRenderRowMarksPinnedEntries(t *testing.T) {
 		t.Fatalf("unpinned row must not show a pin icon, got %q", plain)
 	}
 }
+
+func TestExcludePathCrossesOffAndPersists(t *testing.T) {
+	conn := dbtest.New(t)
+	pages := contextstore.NewStore(conn)
+	m := NewContextPaneCmp(&app.App{Pages: pages})
+	m.taskID = "task-1"
+	m.entries = []ContextEntry{
+		{Path: "a.go", AbsPath: "/repo/a.go", ToolCallID: "call-a"},
+		{Path: "b.go", AbsPath: "/repo/b.go", ToolCallID: "call-b"},
+	}
+
+	if matched := m.ExcludePath("a.go"); matched != 1 {
+		t.Fatalf("expected one match, got %d", matched)
+	}
+	if !m.entries[0].CrossedOff {
+		t.Fatal("the matched entry should be crossed off")
+	}
+	if m.entries[1].CrossedOff {
+		t.Fatal("an unrelated entry must not be touched")
+	}
+
+	excl, err := pages.Exclusions(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("Exclusions: %v", err)
+	}
+	if !excl["call-a"] || excl["call-b"] {
+		t.Fatalf("expected only call-a excluded, got %+v", excl)
+	}
+}
+
+// A mistyped path must be distinguishable from a successful drop, or the user
+// gets silent no-ops.
+func TestExcludePathReportsNoMatch(t *testing.T) {
+	m := NewContextPaneCmp(&app.App{})
+	m.entries = []ContextEntry{{Path: "a.go", AbsPath: "/repo/a.go", ToolCallID: "call-a"}}
+
+	if matched := m.ExcludePath("typo.go"); matched != 0 {
+		t.Fatalf("expected no matches, got %d", matched)
+	}
+	if matched := m.ExcludePath(""); matched != 0 {
+		t.Fatalf("an empty path must match nothing, got %d", matched)
+	}
+	if m.entries[0].CrossedOff {
+		t.Fatal("nothing should have been crossed off")
+	}
+}
+
+// Pages the agent dropped itself must be visibly distinct from ones the user
+// crossed off, and must be undoable the same way.
+func TestAgentDroppedEntriesAreMarkedAndUndoable(t *testing.T) {
+	m := NewContextPaneCmp(&app.App{})
+	m.width = 60
+	m.entries = []ContextEntry{{Path: "a.go", AbsPath: "/repo/a.go", ToolCallID: "call-a", Lines: 10}}
+
+	m.mu.Lock()
+	m.markAgentDroppedLocked([]string{"a.go"})
+	m.mu.Unlock()
+
+	if !m.entries[0].CrossedOff || !m.entries[0].DroppedByAgent {
+		t.Fatalf("agent-dropped entry should be crossed off and marked, got %+v", m.entries[0])
+	}
+
+	row := m.renderRow(m.entries[0], false, 60)
+	if !strings.Contains(row, styles.AgentDropIcon) {
+		t.Fatalf("agent-dropped rows need their own marker, got %q", row)
+	}
+
+	// The user restores it with the same key that un-crosses their own edits.
+	m.selected = 0
+	m.toggleCross(false)
+	if m.entries[0].CrossedOff || m.entries[0].DroppedByAgent {
+		t.Fatalf("restoring should clear both flags, got %+v", m.entries[0])
+	}
+	if strings.Contains(m.renderRow(m.entries[0], false, 60), styles.AgentDropIcon) {
+		t.Fatal("a restored entry must not still show the dropped marker")
+	}
+}

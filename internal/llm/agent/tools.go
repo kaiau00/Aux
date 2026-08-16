@@ -24,21 +24,29 @@ func CoderAgentTools(
 	if len(lspClients) > 0 {
 		otherTools = append(otherTools, tools.NewDiagnosticsTool(lspClients))
 	}
-	return append(
-		[]tools.BaseTool{
-			tools.NewBashTool(permissions),
-			tools.NewEditTool(lspClients, permissions, history),
-			tools.NewFetchTool(permissions),
-			tools.NewGlobTool(permissions),
-			tools.NewGrepTool(permissions),
-			tools.NewLsTool(permissions),
-			tools.NewSourcegraphTool(),
-			tools.NewViewTool(lspClients, permissions),
-			tools.NewPatchTool(lspClients, permissions, history),
-			tools.NewWriteTool(lspClients, permissions, history),
-			NewAgentTool(deps, hookRegistry, permissions, impactSvc, lspClients),
-		}, otherTools...,
-	)
+	base := []tools.BaseTool{
+		tools.NewBashTool(permissions),
+		tools.NewEditTool(lspClients, permissions, history),
+		tools.NewFetchTool(permissions),
+		tools.NewGlobTool(permissions),
+		tools.NewGrepTool(permissions),
+		tools.NewLsTool(permissions),
+		tools.NewSourcegraphTool(),
+		tools.NewViewTool(lspClients, permissions),
+		tools.NewPatchTool(lspClients, permissions, history),
+		tools.NewWriteTool(lspClients, permissions, history),
+		NewAgentTool(deps, hookRegistry, permissions, impactSvc, lspClients),
+	}
+	// Per-page exclusion is only useful if the party generating the context can
+	// reach it, so the tool is offered whenever there is a page store to write
+	// to and history to resolve paths against.
+	if deps.Pages != nil && deps.Messages != nil {
+		base = append(base, tools.NewContextExcludeTool(
+			deps.Pages,
+			newReadHistory(deps.Messages, tools.ResolveWorkingDir(ctx)),
+		))
+	}
+	return append(base, otherTools...)
 }
 
 // TaskAgentTools is the read-only tool set given to subagents. permissions is

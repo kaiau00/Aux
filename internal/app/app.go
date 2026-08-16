@@ -112,6 +112,9 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	pages := contextstore.NewStore(conn)
 	impactSvc := impact.NewService(impact.NewStore(conn))
 	skills := skill.NewService(skill.NewStore(conn), events)
+	// A completed task proposes skill candidates from the commands it actually
+	// validated. They stay inert behind the evaluation gate until promoted.
+	taskCoord.WithSkills(skills)
 	policies := govpolicy.NewService(govpolicy.NewStore(conn), events)
 	checkpointStore := checkpoint.NewStore(conn)
 	checkpoints := checkpoint.NewService(checkpointStore, artifacts, events)

@@ -42,9 +42,14 @@ type ContextEntry struct {
 	Reason     string
 	CrossedOff bool
 	Pinned     bool
-	ReadAt     time.Time
-	MessageID  string
-	ToolCallID string
+	// DroppedByAgent marks an entry the agent excluded itself via the
+	// context_exclude tool, as opposed to one the user crossed off. Both are
+	// crossed off; only this one needs explaining, and the user can undo it
+	// with the same 'u' key.
+	DroppedByAgent bool
+	ReadAt         time.Time
+	MessageID      string
+	ToolCallID     string
 }
 
 type ContextPaneCmp struct {
@@ -296,6 +301,11 @@ func (m *ContextPaneCmp) toggleCross(crossed bool) {
 		return
 	}
 	m.entries[m.selected].CrossedOff = crossed
+	if !crossed {
+		// Restoring a page the agent dropped makes it an ordinary entry again;
+		// keeping the marker would imply it is still excluded.
+		m.entries[m.selected].DroppedByAgent = false
+	}
 	toolCallID := m.entries[m.selected].ToolCallID
 	taskID := m.taskID
 	m.mu.Unlock()
@@ -374,8 +384,16 @@ func (m *ContextPaneCmp) absorbMessage(msg message.Message) {
 	}
 
 	var newEntries []ContextEntry
+	var agentDropped []string
 	for _, result := range results {
 		if result.IsError {
+			continue
+		}
+		// The agent can drop its own pages; reflect that in the pane so the
+		// user can see what it discarded and put anything back.
+		var dropped tools.ContextExcludeResponseMetadata
+		if json.Unmarshal([]byte(result.Metadata), &dropped) == nil && len(dropped.Excluded) > 0 {
+			agentDropped = append(agentDropped, dropped.Excluded...)
 			continue
 		}
 		var meta tools.ViewResponseMetadata
@@ -403,12 +421,14 @@ func (m *ContextPaneCmp) absorbMessage(msg message.Message) {
 		newEntries = append(newEntries, entry)
 	}
 
-	if len(newEntries) == 0 {
+	if len(newEntries) == 0 && len(agentDropped) == 0 {
 		return
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.markAgentDroppedLocked(agentDropped)
 
 	// Replace prior entries for the same path; keep crossed-off state if the
 	// user already marked them.
@@ -431,6 +451,62 @@ func (m *ContextPaneCmp) absorbMessage(msg message.Message) {
 	sort.SliceStable(m.entries, func(i, j int) bool {
 		return m.entries[i].ReadAt.Before(m.entries[j].ReadAt)
 	})
+}
+
+// ExcludePathMsg drops a file from the current task's context by path, which is
+// what the /exclude command sends. The pane's x key does the same thing for the
+// selected row; this exists for the case where the file is not on screen.
+type ExcludePathMsg struct{ Path string }
+
+// ExcludePath crosses off and persistently excludes every entry matching a path.
+// It reports whether anything matched so the caller can tell the user, since a
+// typo would otherwise look identical to success.
+func (m *ContextPaneCmp) ExcludePath(path string) (matched int) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return 0
+	}
+
+	m.mu.Lock()
+	taskID := m.taskID
+	var toolCallIDs []string
+	for i := range m.entries {
+		e := &m.entries[i]
+		if e.AbsPath == path || e.Path == path || strings.HasSuffix(e.AbsPath, "/"+strings.TrimPrefix(path, "./")) {
+			e.CrossedOff = true
+			e.DroppedByAgent = false // the user asked for this one
+			if e.ToolCallID != "" {
+				toolCallIDs = append(toolCallIDs, e.ToolCallID)
+			}
+			matched++
+		}
+	}
+	m.mu.Unlock()
+
+	if m.app == nil || m.app.Pages == nil || taskID == "" {
+		return matched
+	}
+	ctx := context.Background()
+	for _, id := range toolCallIDs {
+		_ = m.app.Pages.Exclude(ctx, taskID, id)
+	}
+	return matched
+}
+
+// markAgentDroppedLocked crosses off entries the agent excluded itself. The
+// paths come from the tool's own report, so they are matched leniently: the
+// agent may have named a file relative while the entry holds it absolute.
+// Callers must hold m.mu.
+func (m *ContextPaneCmp) markAgentDroppedLocked(paths []string) {
+	for _, p := range paths {
+		for i := range m.entries {
+			e := &m.entries[i]
+			if e.AbsPath == p || e.Path == p || strings.HasSuffix(e.AbsPath, "/"+strings.TrimPrefix(p, "./")) {
+				e.CrossedOff = true
+				e.DroppedByAgent = true
+			}
+		}
+	}
 }
 
 // divider renders a thin, muted rule used between the pane's top-level
@@ -884,6 +960,9 @@ func (m *ContextPaneCmp) renderRow(e ContextEntry, selected bool, width int) str
 	}
 	if e.Pinned {
 		displayPath = styles.PinIcon + " " + displayPath
+	}
+	if e.DroppedByAgent {
+		displayPath = styles.AgentDropIcon + " " + displayPath
 	}
 
 	lineInfo := fmt.Sprintf("%d ln", e.Lines)

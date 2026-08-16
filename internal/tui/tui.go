@@ -38,6 +38,11 @@ type keyMap struct {
 	SwitchTheme   key.Binding
 }
 
+// excludeCommandID names the command that drops a file from context. It is
+// special-cased on submit because, unlike every other argument-taking command,
+// it performs a local action instead of sending a prompt.
+const excludeCommandID = "exclude"
+
 type startCompactSessionMsg struct{}
 
 const (
@@ -432,6 +437,12 @@ func (a appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dialog.CloseMultiArgumentsDialogMsg:
 		// Close multi-arguments dialog
 		a.showMultiArgumentsDialog = false
+
+		// The exclude command performs a local action rather than sending a
+		// prompt, so it never reaches the template-substitution path below.
+		if msg.Submit && msg.CommandID == excludeCommandID {
+			return a, util.CmdHandler(chat.ExcludePathMsg{Path: msg.Args["path"]})
+		}
 
 		// If submitted, replace all named arguments and run the command
 		if msg.Submit {
@@ -999,6 +1010,18 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules) or Copilot rules (
 			return func() tea.Msg {
 				return startCompactSessionMsg{}
 			}
+		},
+	})
+
+	model.RegisterCommand(dialog.Command{
+		ID:          excludeCommandID,
+		Title:       "Drop File From Context",
+		Description: "Stop sending an already-read file to the model on later turns",
+		Handler: func(cmd dialog.Command) tea.Cmd {
+			return util.CmdHandler(dialog.ShowMultiArgumentsDialogMsg{
+				CommandID: excludeCommandID,
+				ArgNames:  []string{"path"},
+			})
 		},
 	})
 	// Load custom commands
