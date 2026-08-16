@@ -10,9 +10,15 @@ import (
 	"github.com/aux-ai/aux-cli/internal/promptcompiler"
 )
 
-type fakeTool struct{ name string }
+type fakeTool struct {
+	name   string
+	desc   string
+	params map[string]any
+}
 
-func (f fakeTool) Info() tools.ToolInfo { return tools.ToolInfo{Name: f.name} }
+func (f fakeTool) Info() tools.ToolInfo {
+	return tools.ToolInfo{Name: f.name, Description: f.desc, Parameters: f.params}
+}
 func (f fakeTool) Run(context.Context, tools.ToolCall) (tools.ToolResponse, error) {
 	return tools.ToolResponse{}, nil
 }
@@ -256,15 +262,54 @@ func TestCompileDecomposesIntoPages(t *testing.T) {
 	}
 }
 
-func TestStablePrefixDependsOnToolSetNotOrder(t *testing.T) {
+// The stable prefix identifies the tool block providers serialize at the head of
+// every request and key their prompt cache on. It must therefore change whenever
+// that block changes — including a reorder, which an earlier implementation
+// deliberately hid by sorting names before hashing. Keeping tool order stable is
+// the assembler's job (agent.serverNames); this identity's job is to notice when
+// it is not.
+func TestStablePrefixTracksTheSerializedToolBlock(t *testing.T) {
 	c := promptcompiler.NewCompatibilityCompiler()
-	a := c.Compile(promptcompiler.Input{Tools: []tools.BaseTool{fakeTool{"grep"}, fakeTool{"edit"}}})
-	b := c.Compile(promptcompiler.Input{Tools: []tools.BaseTool{fakeTool{"edit"}, fakeTool{"grep"}}})
-	if a.StablePrefixID != b.StablePrefixID {
-		t.Fatalf("stable prefix should be order-independent over the tool set")
+	prefix := func(ts ...tools.BaseTool) string {
+		return c.Compile(promptcompiler.Input{Tools: ts}).StablePrefixID
 	}
-	d := c.Compile(promptcompiler.Input{Tools: []tools.BaseTool{fakeTool{"grep"}}})
-	if a.StablePrefixID == d.StablePrefixID {
-		t.Fatalf("different tool sets should produce different stable prefixes")
+
+	grep := fakeTool{name: "grep", desc: "search files", params: map[string]any{"q": "string"}}
+	edit := fakeTool{name: "edit", desc: "edit a file"}
+
+	if prefix(grep, edit) != prefix(grep, edit) {
+		t.Fatal("the same tool block must hash identically")
+	}
+	if prefix(grep, edit) == prefix(edit, grep) {
+		t.Fatal("reordering the tool block changes the bytes sent, so it must change the prefix")
+	}
+	if prefix(grep, edit) == prefix(grep) {
+		t.Fatal("a different tool set must produce a different prefix")
+	}
+
+	redescribed := grep
+	redescribed.desc = "search files, but faster"
+	if prefix(grep, edit) == prefix(redescribed, edit) {
+		t.Fatal("editing a tool description invalidates the provider cache, so it must change the prefix")
+	}
+
+	reschemad := grep
+	reschemad.params = map[string]any{"q": "string", "limit": "number"}
+	if prefix(grep, edit) == prefix(reschemad, edit) {
+		t.Fatal("changing a parameter schema must change the prefix")
+	}
+}
+
+// Schemas are built from maps, whose Go iteration order is randomized. Equal
+// schemas must still hash identically or the prefix would churn for no reason.
+func TestStablePrefixIsInsensitiveToSchemaMapOrdering(t *testing.T) {
+	c := promptcompiler.NewCompatibilityCompiler()
+	first := fakeTool{name: "grep", params: map[string]any{"a": 1, "b": 2, "c": 3, "d": 4}}
+	second := fakeTool{name: "grep", params: map[string]any{"d": 4, "c": 3, "b": 2, "a": 1}}
+
+	a := c.Compile(promptcompiler.Input{Tools: []tools.BaseTool{first}}).StablePrefixID
+	b := c.Compile(promptcompiler.Input{Tools: []tools.BaseTool{second}}).StablePrefixID
+	if a != b {
+		t.Fatal("equal schemas built in different key orders must hash identically")
 	}
 }

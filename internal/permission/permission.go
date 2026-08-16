@@ -2,6 +2,7 @@ package permission
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -60,6 +61,31 @@ type permissionService struct {
 	sessionPermissions  []PermissionRequest
 	pendingRequests     sync.Map
 	autoApproveSessions []string
+
+	// promptMu serializes the interactive part of Request: the grant check, the
+	// publish, and the wait for an answer. The UI can only present one approval
+	// dialog at a time, so concurrent callers (tool calls now run in parallel)
+	// must queue rather than race two dialogs into the same surface.
+	//
+	// Holding it across the grant check also deduplicates: if two concurrent
+	// calls need the same approval and the user picks "allow for session", the
+	// second one finds the fresh grant instead of asking again.
+	promptMu sync.Mutex
+}
+
+// safeWorkingDir returns the configured working directory, falling back to the
+// process working directory when config has not been loaded. config.WorkingDirectory
+// panics in that case, and a permission check is the last place that should
+// bring down the process.
+func safeWorkingDir() (dir string) {
+	defer func() {
+		if recover() != nil {
+			if cwd, err := os.Getwd(); err == nil {
+				dir = cwd
+			}
+		}
+	}()
+	return config.WorkingDirectory()
 }
 
 func (s *permissionService) GrantPersistant(permission PermissionRequest) {
@@ -95,7 +121,7 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 	}
 	dir := filepath.Dir(opts.Path)
 	if dir == "." {
-		dir = config.WorkingDirectory()
+		dir = safeWorkingDir()
 	}
 	permission := PermissionRequest{
 		ID:          uuid.New().String(),
@@ -108,6 +134,12 @@ func (s *permissionService) Request(opts CreatePermissionRequest) bool {
 		Fingerprint: opts.Fingerprint,
 	}
 
+	// One dialog at a time. See promptMu.
+	s.promptMu.Lock()
+	defer s.promptMu.Unlock()
+
+	// Re-checked under promptMu rather than before it, so a grant issued while
+	// this caller was queued is honoured instead of prompting twice.
 	if s.hasSessionGrant(permission) {
 		return true
 	}

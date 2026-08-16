@@ -492,79 +492,16 @@ func (a *agent) streamAndHandleEvents(ctx context.Context, sessionID string, msg
 	// Safety net: if the stream closed without an explicit completion event, close
 	// the ledger record so it never remains in the `started` state.
 	a.finalizeCallIfOpen(context.Background(), tracker, sessionID)
+	// Same reasoning for the transcript: EventComplete normally supersedes any
+	// coalesced streaming write, but a stream that ends without one would leave
+	// the last window of deltas unwritten.
+	_ = a.messages.FlushStreamed(context.Background(), assistantMsg.ID)
 
-	toolResults := make([]message.ToolResult, len(assistantMsg.ToolCalls()))
-	toolCalls := assistantMsg.ToolCalls()
-	for i, toolCall := range toolCalls {
-		select {
-		case <-ctx.Done():
-			a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled)
-			// Make all future tool calls cancelled
-			for j := i; j < len(toolCalls); j++ {
-				toolResults[j] = message.ToolResult{
-					ToolCallID: toolCalls[j].ID,
-					Content:    "Tool execution canceled by user",
-					IsError:    true,
-				}
-			}
-			goto out
-		default:
-			// Continue processing
-			var tool tools.BaseTool
-			for _, availableTool := range a.tools {
-				if availableTool.Info().Name == toolCall.Name {
-					tool = availableTool
-					break
-				}
-				// Monkey patch for Copilot Sonnet-4 tool repetition obfuscation
-				// if strings.HasPrefix(toolCall.Name, availableTool.Info().Name) &&
-				// 	strings.HasPrefix(toolCall.Name, availableTool.Info().Name+availableTool.Info().Name) {
-				// 	tool = availableTool
-				// 	break
-				// }
-			}
-
-			// Tool not found
-			if tool == nil {
-				toolResults[i] = message.ToolResult{
-					ToolCallID: toolCall.ID,
-					Content:    fmt.Sprintf("Tool not found: %s", toolCall.Name),
-					IsError:    true,
-				}
-				continue
-			}
-			toolResult, toolErr := a.executor.Execute(ctx, tool, tools.ToolCall{
-				ID:    toolCall.ID,
-				Name:  toolCall.Name,
-				Input: toolCall.Input,
-			})
-			if toolErr != nil {
-				if errors.Is(toolErr, permission.ErrorPermissionDenied) {
-					toolResults[i] = message.ToolResult{
-						ToolCallID: toolCall.ID,
-						Content:    "Permission denied",
-						IsError:    true,
-					}
-					for j := i + 1; j < len(toolCalls); j++ {
-						toolResults[j] = message.ToolResult{
-							ToolCallID: toolCalls[j].ID,
-							Content:    "Tool execution canceled by user",
-							IsError:    true,
-						}
-					}
-					a.finishMessage(ctx, &assistantMsg, message.FinishReasonPermissionDenied)
-					break
-				}
-			}
-			toolResults[i] = message.ToolResult{
-				ToolCallID: toolCall.ID,
-				Content:    toolResult.Content,
-				Metadata:   toolResult.Metadata,
-				IsError:    toolResult.IsError,
-			}
-		}
+	toolResults, toolsCancelled := a.executeToolCalls(ctx, assistantMsg.ToolCalls())
+	if toolsCancelled {
+		a.finishMessage(context.Background(), &assistantMsg, message.FinishReasonCanceled)
 	}
-out:
+
 	a.emit(ctx, eventstore.Append{
 		Type:   eventstore.TurnCompleted,
 		TurnID: turnID,
@@ -618,15 +555,15 @@ func (a *agent) processEvent(ctx context.Context, sessionID string, tracker *cal
 		}
 		a.onFirstToken(ctx, tracker)
 		assistantMsg.AppendReasoningContent(thinking)
-		return a.messages.Update(ctx, *assistantMsg)
+		return a.messages.UpdateStreamed(ctx, *assistantMsg)
 	case provider.EventContentDelta:
 		a.onFirstToken(ctx, tracker)
 		assistantMsg.AppendContent(event.Content)
-		return a.messages.Update(ctx, *assistantMsg)
+		return a.messages.UpdateStreamed(ctx, *assistantMsg)
 	case provider.EventToolUseStart:
 		a.onFirstToken(ctx, tracker)
 		assistantMsg.AddToolCall(*event.ToolCall)
-		return a.messages.Update(ctx, *assistantMsg)
+		return a.messages.UpdateStreamed(ctx, *assistantMsg)
 	// TODO: see how to handle this
 	// case provider.EventToolUseDelta:
 	// 	tm := time.Unix(assistantMsg.UpdatedAt, 0)

@@ -2,6 +2,9 @@ package permission
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -136,5 +139,106 @@ func TestDenyIsNotCached(t *testing.T) {
 	}
 	if _, prompted := requestWithin(t, s, bashRequest("rm -rf /"), time.Second); !prompted {
 		t.Fatal("a denied command must prompt again rather than be cached")
+	}
+}
+
+// Tool calls now run in parallel, so several can need approval at once. The UI
+// can only show one dialog at a time: requests must queue instead of racing two
+// dialogs into the same surface, where the second would overwrite the first and
+// leave its caller blocked forever.
+func TestConcurrentRequestsArePromptedOneAtATime(t *testing.T) {
+	s := NewPermissionService()
+	events := s.Subscribe(context.Background())
+
+	const callers = 8
+	var overlapping int32
+
+	// Stand in for the UI. Reading events in a loop would serialize them by
+	// itself and prove nothing, so the check is on the subscription buffer: if
+	// the service published a second request before this one was answered, that
+	// request is already queued behind the one in hand.
+	answered := make(chan struct{})
+	go func() {
+		defer close(answered)
+		for i := 0; i < callers; i++ {
+			select {
+			case ev := <-events:
+				time.Sleep(2 * time.Millisecond) // hold the "dialog" open
+				if queued := len(events); queued > 0 {
+					atomic.AddInt32(&overlapping, int32(queued))
+				}
+				s.Grant(ev.Payload)
+			case <-time.After(5 * time.Second):
+				t.Error("timed out waiting for a permission request")
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	results := make([]bool, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = s.Request(CreatePermissionRequest{
+				SessionID:   "s1",
+				ToolName:    "bash",
+				Action:      "execute",
+				Path:        "/tmp",
+				Fingerprint: fmt.Sprintf("command-%d", i),
+			})
+		}(i)
+	}
+	wg.Wait()
+	<-answered
+
+	if got := atomic.LoadInt32(&overlapping); got > 0 {
+		t.Fatalf("%d permission requests were published while an earlier one was still unanswered; they must be serialized", got)
+	}
+	for i, granted := range results {
+		if !granted {
+			t.Fatalf("caller %d was not granted despite the UI approving every request", i)
+		}
+	}
+}
+
+// Two parallel tool calls needing the same approval should ask once, not twice:
+// the queued caller must see the grant the first one produced.
+func TestConcurrentIdenticalRequestsPromptOnce(t *testing.T) {
+	s := NewPermissionService()
+	events := s.Subscribe(context.Background())
+
+	var prompts int32
+	go func() {
+		for ev := range events {
+			atomic.AddInt32(&prompts, 1)
+			time.Sleep(2 * time.Millisecond)
+			s.GrantPersistant(ev.Payload)
+		}
+	}()
+
+	opts := CreatePermissionRequest{
+		SessionID:   "s1",
+		ToolName:    "bash",
+		Action:      "execute",
+		Path:        "/tmp",
+		Fingerprint: "go test ./...",
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !s.Request(opts) {
+				t.Error("expected the request to be granted")
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&prompts); got != 1 {
+		t.Fatalf("identical concurrent requests should prompt once, prompted %d times", got)
 	}
 }

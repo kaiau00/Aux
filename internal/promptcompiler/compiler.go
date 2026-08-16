@@ -12,8 +12,8 @@ package promptcompiler
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
@@ -286,17 +286,37 @@ func EstimateMessages(msgs []message.Message) int64 {
 	return (chars + 3) / 4
 }
 
-// stablePrefixID hashes the tool set (part of the cache-stable prefix). The tool
-// names are sorted so ordering does not perturb the identity.
+// stablePrefixID hashes the tool set, which providers serialize at the head of
+// every request and key their prompt cache on.
+//
+// The hash deliberately covers the tool set exactly as it will be sent: in the
+// caller's order, including each tool's description and parameter schema. An
+// earlier version sorted the names and hashed only those, which made the ID
+// stable by construction and therefore useless — it reported an unchanged
+// prefix when the tool order had been reshuffled (see agent.serverNames) or a
+// description had been edited, both of which invalidate the provider's cache.
+// An identity that cannot observe the change it exists to detect is worse than
+// none, because it invites trusting it.
+//
+// Determinism of the *input* is the tool assembler's job, not this function's.
 func stablePrefixID(ts []tools.BaseTool) string {
-	names := make([]string, 0, len(ts))
-	for _, t := range ts {
-		names = append(names, t.Info().Name)
-	}
-	sort.Strings(names)
 	h := sha256.New()
-	for _, n := range names {
-		h.Write([]byte(n))
+	for _, t := range ts {
+		info := t.Info()
+		h.Write([]byte(info.Name))
+		h.Write([]byte{0})
+		h.Write([]byte(info.Description))
+		h.Write([]byte{0})
+		// json.Marshal sorts map keys at every level, so an equal schema always
+		// serializes identically regardless of how it was built.
+		if schema, err := json.Marshal(info.Parameters); err == nil {
+			h.Write(schema)
+		}
+		h.Write([]byte{0})
+		for _, r := range info.Required {
+			h.Write([]byte(r))
+			h.Write([]byte{1})
+		}
 		h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))
