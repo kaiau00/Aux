@@ -89,6 +89,7 @@ type Deps struct {
 	Pages        *contextstore.Store     // optional; records page bindings per call
 	GovernorMode cost.GovernorMode       // optional; off/observe/on, default off
 	Hooks        *hooks.Registry         // optional; dispatches ToolPre/ToolPost around tool execution
+	Permissions  permission.Service      // optional; asks the user to approve continuing past a budget ceiling
 }
 
 type agent struct {
@@ -101,6 +102,7 @@ type agent struct {
 	compiler    promptcompiler.Compiler
 	pages       *contextstore.Store
 	governor    *cost.Governor
+	permissions permission.Service
 	executor    *tools.Executor
 
 	tools    []tools.BaseTool
@@ -153,6 +155,7 @@ func NewAgent(
 		compiler:          compiler,
 		pages:             deps.Pages,
 		governor:          cost.NewGovernor(deps.GovernorMode),
+		permissions:       deps.Permissions,
 		executor:          tools.NewExecutor(deps.Recorder, deps.Virtualizer).WithHooks(deps.Hooks),
 		tools:             agentTools,
 		titleProvider:     titleProvider,
@@ -355,6 +358,9 @@ func (a *agent) processGeneration(ctx context.Context, sessionID, content string
 			return a.err(ctx.Err())
 		default:
 			// Continue processing
+		}
+		if stop, reason := a.budgetStop(ctx, sessionID); stop {
+			return a.err(fmt.Errorf("stopped by the cost governor: %s", reason))
 		}
 		turn, err := a.RunTurn(ctx, sessionID, msgHistory)
 		agentMessage, toolResults := turn.Assistant, turn.ToolResults
@@ -902,9 +908,11 @@ func (a *agent) finalizeCallIfOpen(ctx context.Context, tracker *callTracker, se
 // session totals and emits budget/governor events. It changes no prompt or
 // action (observe); enforcement ("on") is a separate, evaluated step. No-op when
 // the governor is off or no ledger is configured.
-func (a *agent) assessBudget(ctx context.Context, sessionID string) {
+// currentAssessment computes the governor's read on the task/session budget.
+// A disabled assessment means the governor is off or the totals are unknown.
+func (a *agent) currentAssessment(ctx context.Context, sessionID string) (cost.Assessment, cost.Totals) {
 	if a.governor == nil || a.governor.Mode() == cost.GovOff || a.ledger == nil {
-		return
+		return cost.Assessment{}, cost.Totals{}
 	}
 	corr := tools.CorrelationFromContext(ctx)
 	var totals cost.Totals
@@ -915,11 +923,55 @@ func (a *agent) assessBudget(ctx context.Context, sessionID string) {
 		totals, err = a.ledger.SessionTotals(ctx, sessionID)
 	}
 	if err != nil {
-		return
+		return cost.Assessment{}, cost.Totals{}
 	}
 	budget := cost.DefaultBudget(cost.ModeBalanced)
 	usage := cost.Usage{InputTokens: totals.PromptTokens, OutputTokens: totals.CompletionTokens, Cost: totals.Cost}
-	assessment := a.governor.Assess(budget, usage, nil)
+	return a.governor.Assess(budget, usage, nil), totals
+}
+
+// budgetStop enforces the governor in "on" mode (roadmapplan.md §15.2). When a
+// task has exhausted its budget it pauses before spending more and asks the
+// user whether to keep going; declining ends the task with a clear reason
+// rather than silently burning the remaining budget.
+//
+// "observe" mode never stops — it only emits the events assessBudget already
+// records — so the two modes finally differ in behaviour, which is the whole
+// point of having both.
+func (a *agent) budgetStop(ctx context.Context, sessionID string) (stop bool, reason string) {
+	if a.governor == nil || a.governor.Mode() != cost.GovOn {
+		return false, ""
+	}
+	assessment, totals := a.currentAssessment(ctx, sessionID)
+	if !assessment.Enabled || !assessment.Exhausted {
+		return false, ""
+	}
+	spent := fmt.Sprintf("$%.4f over %d input / %d output tokens",
+		totals.Cost, totals.PromptTokens, totals.CompletionTokens)
+
+	// Without a way to ask, stopping is the safe answer: "on" mode exists
+	// precisely so an unattended run cannot spend without bound.
+	if a.permissions == nil {
+		return true, "budget exhausted (" + spent + ") and no approval channel is available"
+	}
+	approved := a.permissions.Request(permission.CreatePermissionRequest{
+		SessionID:   sessionID,
+		ToolName:    "governor",
+		Action:      "continue",
+		Path:        tools.ResolveWorkingDir(ctx),
+		Description: "Budget exhausted: " + spent + ". Continue this task anyway?",
+		// Approving once must not silently authorize every later overrun; the
+		// fingerprint changes as spend does, so each new ceiling asks again.
+		Fingerprint: spent,
+	})
+	if approved {
+		return false, ""
+	}
+	return true, "budget exhausted (" + spent + ") and continuing was declined"
+}
+
+func (a *agent) assessBudget(ctx context.Context, sessionID string) {
+	assessment, _ := a.currentAssessment(ctx, sessionID)
 	if !assessment.Enabled {
 		return
 	}

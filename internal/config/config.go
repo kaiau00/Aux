@@ -1118,3 +1118,20 @@ func LoadGitHubToken() (string, error) {
 
 	return "", fmt.Errorf("GitHub token not found in standard locations")
 }
+
+// SetContextPaging overrides the prompt-compiler selection for this process,
+// so `aux --paging=on` can enable demand paging without editing config files.
+// Only "on" and "off" are accepted: silently ignoring a typo would leave the
+// user believing paging was enabled when it wasn't.
+func SetContextPaging(mode string) error {
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	switch mode {
+	case "on", "off":
+		cfg.Context.Paging = mode
+		return nil
+	default:
+		return fmt.Errorf("invalid --paging value %q: want \"on\" or \"off\"", mode)
+	}
+}

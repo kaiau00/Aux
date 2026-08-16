@@ -230,3 +230,28 @@ func DiffEffective(a, b Effective) (added, removed, changed []string) {
 	sort.Strings(changed)
 	return added, removed, changed
 }
+
+// ValidationCommand is a runnable command discovered for the project, with the
+// entry key it came from so a caller can report which one ran.
+type ValidationCommand struct {
+	Key     string
+	Command string
+	Type    string
+}
+
+// ValidationCommands returns the effective profile's test and build commands.
+// These are the concrete, project-specific ways to check whether work is
+// actually done (roadmapplan.md §14.1), extracted here so validation does not
+// need to know how profile entries are encoded.
+func (e Effective) ValidationCommands() []ValidationCommand {
+	var out []ValidationCommand
+	for _, entry := range e.Entries {
+		switch entry.Type {
+		case EntryValidationCommand:
+			out = append(out, ValidationCommand{Key: entry.Key, Command: commandOf(entry.ValueJSON), Type: "test"})
+		case EntryBuildCommand:
+			out = append(out, ValidationCommand{Key: entry.Key, Command: commandOf(entry.ValueJSON), Type: "build"})
+		}
+	}
+	return out
+}

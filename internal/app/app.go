@@ -98,6 +98,9 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 	memories := memory.NewService(memory.NewStore(conn), events)
 	validations := validation.NewService(validation.NewStore(conn), events)
 	hookRegistry := hooks.NewRegistry()
+	// Without registered handlers the six dispatch points fire into an empty
+	// list; these give the hook system a real consumer.
+	hooks.RegisterObservability(hookRegistry)
 	relatedStore := relatedproject.NewStore(conn)
 	taskCoord := task.NewCoordinator(projects, profiles, taskStore, events, config.WorkingDirectory()).
 		WithMemory(memories).WithValidation(validations).WithHooks(hookRegistry).WithRelatedProjects(relatedStore)
@@ -187,6 +190,7 @@ func New(ctx context.Context, conn *sql.DB) (*App, error) {
 		Compiler:     compiler,
 		GovernorMode: cost.GovernorMode(config.Get().CostGovernor.Mode),
 		Hooks:        app.Hooks,
+		Permissions:  app.Permissions,
 	}
 	coderTools := append(
 		agent.CoderAgentTools(coderDeps, app.Permissions, app.History, app.LSPClients, app.Hooks, app.Impact),
