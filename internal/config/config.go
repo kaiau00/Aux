@@ -244,7 +244,9 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		}
 		logging.MessageDir = messagesPath
 
-		sloggingFileWriter, err := os.OpenFile(loggingFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+		// 0600, not 0666: debug logs capture prompts and tool output, which can
+		// contain anything the agent read.
+		sloggingFileWriter, err := os.OpenFile(loggingFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return cfg, fmt.Errorf("failed to open log file: %w", err)
 		}
@@ -991,7 +993,9 @@ func updateCfgFile(updateCfg func(config *Config)) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(configFile, updatedData, 0o644); err != nil {
+	// 0600: this file holds provider API keys in plaintext, so it must not be
+	// readable by other users on the machine.
+	if err := os.WriteFile(configFile, updatedData, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

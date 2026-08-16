@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -454,7 +455,10 @@ func (s *Server) authorized(r *http.Request) bool {
 	if token == "" {
 		token = r.Header.Get("X-Aux-Dashboard-Token")
 	}
-	return token != "" && token == s.token
+	// Constant-time compare: this is the dashboard's only authentication
+	// boundary, and == returns as soon as two bytes differ, which leaks how
+	// much of a guessed token was correct.
+	return token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
 }
 
 func (s *Server) snapshot(ctx context.Context) (Snapshot, error) {

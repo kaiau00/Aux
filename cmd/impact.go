@@ -40,8 +40,14 @@ var impactCmd = &cobra.Command{
 		}
 
 		svc := impact.NewService(impact.NewStore(conn))
-		// Ensure the graph exists (index if this is the first run).
-		if st, ok, _ := impact.NewStore(conn).GetIndexState(ctx, res.Project.ID); !ok || st.Status != "indexed" {
+		// Ensure the graph exists (index if this is the first run). A read error
+		// here is surfaced rather than folded into "not indexed", which would
+		// silently trigger a full reindex on every run.
+		st, ok, err := impact.NewStore(conn).GetIndexState(ctx, res.Project.ID)
+		if err != nil {
+			return fmt.Errorf("failed to read impact index state: %w", err)
+		}
+		if !ok || st.Status != "indexed" {
 			if _, err := svc.Index(ctx, res.Project.ID, res.Root.CanonicalPath, res.Revision.VCSRevision); err != nil {
 				return fmt.Errorf("failed to build impact graph: %w", err)
 			}

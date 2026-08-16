@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
@@ -261,7 +262,7 @@ func stateIcon(state viewmodel.ComponentState) string {
 	case viewmodel.StateWaiting, viewmodel.StateQueued:
 		return "○" // ○
 	case viewmodel.StateCompleted, viewmodel.StateValidated:
-		return "✓" // ✓
+		return styles.CheckIcon
 	case viewmodel.StateFailed:
 		return "✗" // ✗
 	case viewmodel.StateBlocked:

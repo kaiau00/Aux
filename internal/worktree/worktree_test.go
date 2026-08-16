@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aux-ai/aux-cli/internal/worktree"
@@ -150,6 +151,47 @@ func TestDiffSnapshotsDetectsAddedModifiedAndRemoved(t *testing.T) {
 		if p == "unchanged.txt" {
 			t.Fatal("unchanged.txt must not be reported as changed")
 		}
+	}
+}
+
+func TestRemoveAndDeleteBranchLeavesNoRefBehind(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	wtPath := filepath.Join(t.TempDir(), "subagent-refs")
+	const branch = "aux/subagent/refs"
+
+	if _, err := worktree.Create(ctx, repo, wtPath, branch, ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := worktree.Remove(ctx, repo, wtPath, true); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	branches := func() string {
+		t.Helper()
+		out, err := exec.Command("git", "-C", repo, "branch", "--list", branch).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git branch --list: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+
+	// `git worktree remove` on its own leaves the branch ref behind, which is
+	// the leak this guards against.
+	if !strings.Contains(branches(), "aux/subagent/refs") {
+		t.Skip("git removed the branch with the worktree; nothing left to assert")
+	}
+	if err := worktree.DeleteBranch(ctx, repo, branch); err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+	if got := branches(); strings.Contains(got, "aux/subagent/refs") {
+		t.Fatalf("expected the branch ref to be gone, still listed: %q", got)
+	}
+}
+
+func TestDeleteBranchEmptyNameIsNoOp(t *testing.T) {
+	if err := worktree.DeleteBranch(context.Background(), t.TempDir(), ""); err != nil {
+		t.Fatalf("empty branch name should be a no-op, got %v", err)
 	}
 }
 

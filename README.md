@@ -116,7 +116,7 @@ Beyond the interactive TUI (`aux`) and one-shot prompts (`aux -p "..."`), Aux sh
 | `aux task begin <objective> [--repo <path>...] [--auto-related] [--json]` | Begin a task; pass `--repo` more than once (or `--auto-related`) to compile a multi-repository task |
 | `aux impact <changed-path>... [--json]` | Show the change impact (dependents, affected packages, tests) for a set of paths |
 | `aux cost <task-id> [--json]` | Show a task's budget usage, trajectory, and waste warnings |
-| `aux eval` | Compare compatibility vs. paging prompt compilation on baseline fixtures |
+| `aux eval compiler` | Compare compatibility vs. paging prompt compilation on baseline fixtures |
 | `aux eval experiment` | Run and persist the compiler experiment (compatibility vs. paging) |
 | `aux eval replay <task-id>` | Deterministically reconstruct a task's state from its durable events, offline |
 | `aux eval ab <baseline-task-id> <variant-task-id>` | Compare accepted validated changes per dollar for two recorded runs |
@@ -135,6 +135,10 @@ Beyond the interactive TUI (`aux`) and one-shot prompts (`aux -p "..."`), Aux sh
 | `--prompt` | `-p` | Run a single prompt in non-interactive mode |
 | `--output-format` | `-f` | Output format for non-interactive mode (`text`, `json`) |
 | `--quiet` | `-q` | Hide spinner in non-interactive mode |
+| `--version` | `-v` | Print the version and exit |
+
+`--debug` and `--cwd` apply to the interactive `aux` command itself; subcommands
+resolve the project from the current directory.
 
 ## The dashboard
 

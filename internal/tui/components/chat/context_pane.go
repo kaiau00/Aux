@@ -162,8 +162,8 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case SessionSelectedMsg:
-		if msg.ID != m.sessionID {
-			m.sessionID = msg.ID
+		if msg.ID != m.currentSessionID() {
+			m.setSessionID(msg.ID)
 			m.mu.Lock()
 			m.entries = nil
 			m.selected = 0
@@ -175,7 +175,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshWorkbench()
 		}
 	case SessionClearedMsg:
-		m.sessionID = ""
+		m.setSessionID("")
 		m.mu.Lock()
 		m.entries = nil
 		m.selected = 0
@@ -184,7 +184,7 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hasTask = false
 		m.mu.Unlock()
 	case pubsub.Event[message.Message]:
-		if m.sessionID == "" || msg.Payload.SessionID != m.sessionID {
+		if sid := m.currentSessionID(); sid == "" || msg.Payload.SessionID != sid {
 			return m, nil
 		}
 		if msg.Type == pubsub.CreatedEvent || msg.Type == pubsub.UpdatedEvent {
@@ -198,8 +198,8 @@ func (m *ContextPaneCmp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return <-ch
 		}
 	case pubsub.Event[session.Session]:
-		if m.sessionID == "" && msg.Type == pubsub.CreatedEvent {
-			m.sessionID = msg.Payload.ID
+		if m.currentSessionID() == "" && msg.Type == pubsub.CreatedEvent {
+			m.setSessionID(msg.Payload.ID)
 		}
 	case tea.KeyMsg:
 		// Skip pane hotkeys while the editor textarea has focus so x/u/c/j/k
@@ -252,6 +252,21 @@ func (m *ContextPaneCmp) SetSize(width, height int) tea.Cmd {
 
 func (m *ContextPaneCmp) GetSize() (int, int) {
 	return m.width, m.height
+}
+
+// currentSessionID and setSessionID keep sessionID under the same mutex that
+// guards the rest of the pane's state: it is written from the Bubble Tea
+// update goroutine and read by the refresh helpers.
+func (m *ContextPaneCmp) currentSessionID() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessionID
+}
+
+func (m *ContextPaneCmp) setSessionID(id string) {
+	m.mu.Lock()
+	m.sessionID = id
+	m.mu.Unlock()
 }
 
 func (m *ContextPaneCmp) moveSelection(delta int) {
@@ -549,13 +564,14 @@ const maxActivityRows = 6
 // durable tool events (roadmapplan.md §13.7). Failures are ignored so
 // observability never disturbs the pane; empty results simply hide the section.
 func (m *ContextPaneCmp) refreshActivity() {
-	if m.app == nil || m.app.Events == nil || m.sessionID == "" {
+	sessionID := m.currentSessionID()
+	if m.app == nil || m.app.Events == nil || sessionID == "" {
 		m.mu.Lock()
 		m.activity = nil
 		m.mu.Unlock()
 		return
 	}
-	events, err := m.app.Events.List(context.Background(), eventstore.Filter{SessionID: m.sessionID})
+	events, err := m.app.Events.List(context.Background(), eventstore.Filter{SessionID: sessionID})
 	if err != nil {
 		return
 	}
@@ -586,14 +602,15 @@ func (m *ContextPaneCmp) activityView() string {
 // stopped. Changes come from the task's latest checkpoint, so they read "no
 // changes yet" until a checkpoint exists.
 func (m *ContextPaneCmp) refreshWorkbench() {
-	if m.app == nil || m.app.Tasks == nil || m.sessionID == "" {
+	sessionID := m.currentSessionID()
+	if m.app == nil || m.app.Tasks == nil || sessionID == "" {
 		m.mu.Lock()
 		m.hasTask = false
 		m.mu.Unlock()
 		return
 	}
 	ctx := context.Background()
-	tasks, err := m.app.Tasks.ListBySession(ctx, m.sessionID)
+	tasks, err := m.app.Tasks.ListBySession(ctx, sessionID)
 	if err != nil || len(tasks) == 0 {
 		return
 	}
@@ -668,7 +685,7 @@ func (m *ContextPaneCmp) savedTokens(ctx context.Context) int64 {
 	if m.app.Events == nil {
 		return 0
 	}
-	events, err := m.app.Events.List(ctx, eventstore.Filter{SessionID: m.sessionID})
+	events, err := m.app.Events.List(ctx, eventstore.Filter{SessionID: m.currentSessionID()})
 	if err != nil {
 		return 0
 	}

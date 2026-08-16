@@ -139,7 +139,7 @@ func generateMarkdownStyleConfig() ansi.StyleConfig {
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{},
-			Ticked:         "[✓] ",
+			Ticked:         "[" + CheckIcon + "] ",
 			Unticked:       "[ ] ",
 		},
 		Link: ansi.StylePrimitive{

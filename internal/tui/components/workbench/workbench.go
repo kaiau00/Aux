@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
@@ -121,7 +122,7 @@ func RenderValidation(vm viewmodel.ValidationSummaryVM, width int) string {
 func validationGlyph(state viewmodel.ComponentState) string {
 	switch state {
 	case viewmodel.StateValidated:
-		return "✓"
+		return styles.CheckIcon
 	case viewmodel.StateBlocked:
 		return "⊘"
 	case viewmodel.StateFailed:

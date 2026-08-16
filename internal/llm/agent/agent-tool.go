@@ -75,7 +75,7 @@ type AgentParams struct {
 func (b *agentTool) Info() tools.ToolInfo {
 	return tools.ToolInfo{
 		Name:        AgentToolName,
-		Description: "Launch a new agent that has access to bounded semantic code exploration tools. The agent should prefer codebase-memory-guided retrieval before broad Glob, Grep, LS, or View usage.\n\nUsage notes:\n1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses\n2. When the agent is done, it reports back via the report tool rather than a free-text message; that structured report is what you receive as this tool's result. To show the user the result, send a text message summarizing it.\n3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously.\n4. Optionally set role to specialize the agent: repo_mapper (locate relevant files/symbols), impact_analyst (determine blast radius via the impact graph), validation_runner (run validation commands), or reviewer (find issues in current changes). Omit role for a generic exploration agent.\n5. The agent's outputs should generally be trusted\n6. IMPORTANT: Only the validation_runner role can run commands (Bash); no role can Edit or Write files directly. If you want to modify files, do that directly instead of going through the agent.",
+		Description: "Launch a new agent that has access to bounded semantic code exploration tools. The agent should prefer codebase-memory-guided retrieval before broad Glob, Grep, LS, or View usage.\n\nUsage notes:\n1. Agents run one at a time, in the order they appear; issuing several in one message queues them rather than running them in parallel, so prefer one well-scoped agent over several speculative ones\n2. When the agent is done, it reports back via the report tool rather than a free-text message; that structured report is what you receive as this tool's result. To show the user the result, send a text message summarizing it.\n3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously.\n4. Optionally set role to specialize the agent: repo_mapper (locate relevant files/symbols), impact_analyst (determine blast radius via the impact graph), validation_runner (run validation commands), or reviewer (find issues in current changes). Omit role for a generic exploration agent.\n5. The agent's outputs should generally be trusted\n6. IMPORTANT: Only the validation_runner role can run commands (Bash); no role can Edit or Write files directly. If you want to modify files, do that directly instead of going through the agent.",
 		Parameters: map[string]any{
 			"prompt": map[string]any{
 				"type":        "string",
@@ -258,8 +258,15 @@ func prepareValidationWorktree(ctx context.Context, repoRoot, callID string) (di
 		return "", nil, noop, false
 	}
 	return wt.Path, snap, func() {
-		if err := worktree.Remove(context.Background(), repoRoot, wt.Path, true); err != nil {
+		cleanupCtx := context.Background()
+		if err := worktree.Remove(cleanupCtx, repoRoot, wt.Path, true); err != nil {
 			logging.Warn("failed to remove subagent worktree", "path", wt.Path, "error", err)
+			return
+		}
+		// Removing the worktree frees the directory but leaves the branch ref,
+		// so without this every subagent run would accumulate one.
+		if err := worktree.DeleteBranch(cleanupCtx, repoRoot, wt.Branch); err != nil {
+			logging.Warn("failed to delete subagent branch", "branch", wt.Branch, "error", err)
 		}
 	}, true
 }

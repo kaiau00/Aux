@@ -276,3 +276,32 @@ func TestBrainPagesServedWithToken(t *testing.T) {
 		}
 	}
 }
+
+// TestNavAssetDoesNotBuildMarkupFromQueryString guards a fixed XSS: nav.js used
+// to concatenate location.search into an href inside an innerHTML string, so a
+// crafted query string could break out of the attribute and inject script on
+// every page that mounts the nav. The nav must keep building its DOM with
+// createElement/textContent instead.
+func TestNavAssetDoesNotBuildMarkupFromQueryString(t *testing.T) {
+	data, err := assets.ReadFile("assets/js/nav.js")
+	if err != nil {
+		t.Fatalf("read nav.js: %v", err)
+	}
+	// Comments legitimately mention innerHTML to explain why it isn't used, so
+	// only executable lines are checked.
+	var code strings.Builder
+	for _, line := range strings.Split(string(data), "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		code.WriteString(line)
+		code.WriteByte('\n')
+	}
+	src := code.String()
+	if strings.Contains(src, "innerHTML") {
+		t.Error("nav.js must not assign innerHTML; build nodes with createElement/textContent")
+	}
+	if !strings.Contains(src, "textContent") {
+		t.Error("nav.js should set link/label text via textContent")
+	}
+}

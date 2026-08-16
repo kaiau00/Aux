@@ -55,6 +55,21 @@ func Remove(ctx context.Context, repoRoot, path string, force bool) error {
 	return nil
 }
 
+// DeleteBranch deletes a branch created by Create. `git worktree remove` frees
+// the directory but leaves the branch ref behind, so without this every
+// subagent run would leave a permanent aux/subagent/* ref in the user's repo.
+// force is required because a subagent's branch is normally unmerged, which is
+// exactly the state a plain `git branch -d` refuses to delete.
+func DeleteBranch(ctx context.Context, repoRoot, branch string) error {
+	if branch == "" {
+		return nil
+	}
+	if err := run(ctx, repoRoot, "branch", "-D", branch); err != nil {
+		return fmt.Errorf("failed to delete branch %q: %w", branch, err)
+	}
+	return nil
+}
+
 // SyncWorkingTree overlays repoRoot's live working directory onto dst, a
 // worktree created via Create (checked out at HEAD or another commit). Create
 // alone only reflects the last commit; a subagent working against dst needs

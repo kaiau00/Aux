@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
@@ -43,7 +44,7 @@ func RowText(g viewmodel.ActivityGroupVM) string {
 	// The error state comes first after the label so it survives width
 	// truncation — an error is never collapsed away (§13.7).
 	if g.Errors > 0 {
-		parts = append(parts, fmt.Sprintf("⚠ %d failed", g.Errors))
+		parts = append(parts, fmt.Sprintf("%s %d failed", styles.WarningIcon, g.Errors))
 	}
 	if s := strings.TrimSpace(g.Summary); s != "" {
 		parts = append(parts, s)
@@ -96,7 +97,7 @@ func stateGlyph(state viewmodel.ComponentState) string {
 	case viewmodel.StateActive:
 		return "▶"
 	case viewmodel.StateCompleted, viewmodel.StateValidated:
-		return "✓"
+		return styles.CheckIcon
 	case viewmodel.StateFailed:
 		return "✗"
 	case viewmodel.StateBlocked:

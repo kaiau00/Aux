@@ -121,14 +121,18 @@ func (p *chatPage) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				util.CmdHandler(chat.SessionClearedMsg{}),
 			)
 		case key.Matches(msg, keyMap.Cancel):
+			// Esc closes the topmost thing first. The drawer is checked before
+			// cancellation because otherwise, once a session exists, the
+			// cancel branch always won and the drawer could only be closed
+			// with its own toggle.
+			if p.showContextDrawer {
+				p.showContextDrawer = false
+				return p, nil
+			}
 			if p.session.ID != "" {
 				// Cancel the current session's generation process
 				// This allows users to interrupt long-running operations
 				p.app.CoderAgent.Cancel(p.session.ID)
-				return p, nil
-			}
-			if p.showContextDrawer {
-				p.showContextDrawer = false
 				return p, nil
 			}
 		case key.Matches(msg, keyMap.ToggleContextDrawer):
@@ -239,6 +243,12 @@ func (p *chatPage) BindingKeys() []key.Binding {
 	bindings := layout.KeyMapToSlice(keyMap)
 	bindings = append(bindings, p.messages.BindingKeys()...)
 	bindings = append(bindings, p.editor.BindingKeys()...)
+	// The context pane's hotkeys (cross off, pin, expand, dashboard URL) are
+	// live whenever the editor isn't focused, so the help overlay has to list
+	// them too — otherwise they work but are undiscoverable.
+	if p.contextPane != nil {
+		bindings = append(bindings, p.contextPane.BindingKeys()...)
+	}
 	return bindings
 }
 

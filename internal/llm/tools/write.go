@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/diff"
 	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/logging"
@@ -113,7 +112,7 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 
 	filePath := params.FilePath
 	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(config.WorkingDirectory(), filePath)
+		filePath = filepath.Join(ResolveWorkingDir(ctx), filePath)
 	}
 
 	fileInfo, err := os.Stat(filePath)
@@ -161,7 +160,7 @@ func (w *writeTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 		filePath,
 	)
 
-	rootDir := config.WorkingDirectory()
+	rootDir := ResolveWorkingDir(ctx)
 	permissionPath := filepath.Dir(filePath)
 	if strings.HasPrefix(filePath, rootDir) {
 		permissionPath = rootDir

@@ -70,8 +70,14 @@ var skillListCmd = &cobra.Command{
 		}
 		defer closer()
 		ctx := context.Background()
-		candidates, _ := svc.Candidates(ctx)
-		active, _ := svc.Active(ctx)
+		candidates, err := svc.Candidates(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list candidate skills: %w", err)
+		}
+		active, err := svc.Active(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list active skills: %w", err)
+		}
 		fmt.Printf("Active skills (%d):\n", len(active))
 		for _, s := range active {
 			fmt.Printf("  - %s\n", s.Name)
