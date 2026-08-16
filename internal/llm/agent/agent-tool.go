@@ -138,7 +138,7 @@ func (b *agentTool) Run(ctx context.Context, call tools.ToolCall) (tools.ToolRes
 	}
 
 	collector := &reportCollector{}
-	base := TaskAgentTools(b.lspClients)
+	base := TaskAgentTools(b.lspClients, b.permissions)
 	var bashTool tools.BaseTool
 	if params.Role == RoleValidationRunner && b.permissions != nil {
 		bashTool = tools.NewBashTool(b.permissions)

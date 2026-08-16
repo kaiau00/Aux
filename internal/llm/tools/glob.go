@@ -13,6 +13,7 @@ import (
 
 	"github.com/aux-ai/aux-cli/internal/fileutil"
 	"github.com/aux-ai/aux-cli/internal/logging"
+	"github.com/aux-ai/aux-cli/internal/permission"
 )
 
 const (
@@ -63,10 +64,12 @@ type GlobResponseMetadata struct {
 	Truncated     bool `json:"truncated"`
 }
 
-type globTool struct{}
+type globTool struct{ permissions permission.Service }
 
-func NewGlobTool() BaseTool {
-	return &globTool{}
+// NewGlobTool builds the glob tool. permissions gates matches resolved outside
+// the working directory; passing nil makes such reads fail closed.
+func NewGlobTool(permissions permission.Service) BaseTool {
+	return &globTool{permissions: permissions}
 }
 
 func (g *globTool) Info() ToolInfo {
@@ -100,6 +103,10 @@ func (g *globTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	searchPath := params.Path
 	if searchPath == "" {
 		searchPath = ResolveWorkingDir(ctx)
+	}
+
+	if err := RequireReadAccess(ctx, g.permissions, GlobToolName, searchPath); err != nil {
+		return ToolResponse{}, err
 	}
 
 	files, truncated, err := globFiles(ctx, params.Pattern, searchPath, 100)

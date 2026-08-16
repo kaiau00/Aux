@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/fileutil"
+	"github.com/aux-ai/aux-cli/internal/permission"
 )
 
 type GrepParams struct {
@@ -36,7 +37,7 @@ type GrepResponseMetadata struct {
 	Truncated       bool `json:"truncated"`
 }
 
-type grepTool struct{}
+type grepTool struct{ permissions permission.Service }
 
 const (
 	GrepToolName    = "grep"
@@ -78,8 +79,10 @@ TIPS:
 - Use literal_text=true when searching for exact text containing special characters like dots, parentheses, etc.`
 )
 
-func NewGrepTool() BaseTool {
-	return &grepTool{}
+// NewGrepTool builds the grep tool. permissions gates searches rooted outside
+// the working directory; passing nil makes such reads fail closed.
+func NewGrepTool(permissions permission.Service) BaseTool {
+	return &grepTool{permissions: permissions}
 }
 
 func (g *grepTool) Info() ToolInfo {
@@ -139,6 +142,10 @@ func (g *grepTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	searchPath := params.Path
 	if searchPath == "" {
 		searchPath = ResolveWorkingDir(ctx)
+	}
+
+	if err := RequireReadAccess(ctx, g.permissions, GrepToolName, searchPath); err != nil {
+		return ToolResponse{}, err
 	}
 
 	matches, truncated, err := searchFiles(searchPattern, searchPath, params.Include, 100)

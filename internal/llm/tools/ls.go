@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/aux-ai/aux-cli/internal/permission"
 )
 
 type LSParams struct {
@@ -26,7 +28,7 @@ type LSResponseMetadata struct {
 	Truncated     bool `json:"truncated"`
 }
 
-type lsTool struct{}
+type lsTool struct{ permissions permission.Service }
 
 const (
 	LSToolName    = "ls"
@@ -61,8 +63,10 @@ TIPS:
 - Combine with other tools for more effective exploration`
 )
 
-func NewLsTool() BaseTool {
-	return &lsTool{}
+// NewLsTool builds the ls tool. permissions gates listings outside the working
+// directory; passing nil makes such reads fail closed.
+func NewLsTool(permissions permission.Service) BaseTool {
+	return &lsTool{permissions: permissions}
 }
 
 func (l *lsTool) Info() ToolInfo {
@@ -102,6 +106,10 @@ func (l *lsTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 		searchPath = filepath.Join(workingDir, searchPath)
 	}
 
+	if err := RequireReadAccess(ctx, l.permissions, LSToolName, searchPath); err != nil {
+		return ToolResponse{}, err
+	}
+
 	if _, err := os.Stat(searchPath); os.IsNotExist(err) {
 		return NewTextErrorResponse(fmt.Sprintf("path does not exist: %s", searchPath)), nil
 	}
@@ -127,14 +135,7 @@ func (l *lsTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error) {
 	), nil
 }
 
-func lsWorkingDirectory(ctx context.Context) (workingDir string) {
-	defer func() {
-		if recover() != nil {
-			if cwd, err := os.Getwd(); err == nil {
-				workingDir = cwd
-			}
-		}
-	}()
+func lsWorkingDirectory(ctx context.Context) string {
 	return ResolveWorkingDir(ctx)
 }
 

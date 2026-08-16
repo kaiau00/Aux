@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	"github.com/aux-ai/aux-cli/internal/config"
 )
@@ -99,10 +100,23 @@ type BaseTool interface {
 // should operate in: a per-call override set on ctx if present (e.g. a
 // subagent's isolated worktree), otherwise the process-wide configured
 // working directory.
-func ResolveWorkingDir(ctx context.Context) string {
+//
+// It never panics. config.WorkingDirectory panics when no config has been
+// loaded, which is legitimate in tests and in early startup paths, so that
+// case falls back to the process working directory — every caller here is
+// resolving a path, and a panic deep inside a tool call is never the right
+// answer.
+func ResolveWorkingDir(ctx context.Context) (dir string) {
 	if v, ok := ctx.Value(WorkingDirContextKey).(string); ok && v != "" {
 		return v
 	}
+	defer func() {
+		if recover() != nil {
+			if cwd, err := os.Getwd(); err == nil {
+				dir = cwd
+			}
+		}
+	}()
 	return config.WorkingDirectory()
 }
 

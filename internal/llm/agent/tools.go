@@ -29,11 +29,11 @@ func CoderAgentTools(
 			tools.NewBashTool(permissions),
 			tools.NewEditTool(lspClients, permissions, history),
 			tools.NewFetchTool(permissions),
-			tools.NewGlobTool(),
-			tools.NewGrepTool(),
-			tools.NewLsTool(),
+			tools.NewGlobTool(permissions),
+			tools.NewGrepTool(permissions),
+			tools.NewLsTool(permissions),
 			tools.NewSourcegraphTool(),
-			tools.NewViewTool(lspClients),
+			tools.NewViewTool(lspClients, permissions),
 			tools.NewPatchTool(lspClients, permissions, history),
 			tools.NewWriteTool(lspClients, permissions, history),
 			NewAgentTool(deps, hookRegistry, permissions, impactSvc, lspClients),
@@ -41,12 +41,15 @@ func CoderAgentTools(
 	)
 }
 
-func TaskAgentTools(lspClients map[string]*lsp.Client) []tools.BaseTool {
+// TaskAgentTools is the read-only tool set given to subagents. permissions is
+// required for the same reason the coder agent needs it: a subagent reading
+// outside its working directory must prompt rather than silently succeed.
+func TaskAgentTools(lspClients map[string]*lsp.Client, permissions permission.Service) []tools.BaseTool {
 	return []tools.BaseTool{
-		tools.NewGlobTool(),
-		tools.NewGrepTool(),
-		tools.NewLsTool(),
+		tools.NewGlobTool(permissions),
+		tools.NewGrepTool(permissions),
+		tools.NewLsTool(permissions),
 		tools.NewSourcegraphTool(),
-		tools.NewViewTool(lspClients),
+		tools.NewViewTool(lspClients, permissions),
 	}
 }

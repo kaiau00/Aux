@@ -174,7 +174,10 @@ func getEnvironmentInfo() string {
 	isGit := isGitRepo(cwd)
 	platform := runtime.GOOS
 	date := time.Now().Format("1/2/2006")
-	ls := tools.NewLsTool()
+	// Nil permissions is safe here: this listing is of the working directory
+	// itself, which never needs approval, and it runs while assembling the
+	// system prompt rather than on the model's behalf.
+	ls := tools.NewLsTool(nil)
 	r, _ := ls.Run(context.Background(), tools.ToolCall{
 		Input: `{"path":"."}`,
 	})

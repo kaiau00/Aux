@@ -13,7 +13,7 @@ import (
 )
 
 func TestLsTool_Info(t *testing.T) {
-	tool := NewLsTool()
+	tool := NewLsTool(&recordingPermissions{grant: true})
 	info := tool.Info()
 
 	assert.Equal(t, LSToolName, info.Name)
@@ -68,7 +68,7 @@ func TestLsTool_Run(t *testing.T) {
 	}
 
 	t.Run("lists directory successfully", func(t *testing.T) {
-		tool := NewLsTool()
+		tool := NewLsTool(&recordingPermissions{grant: true})
 		params := LSParams{
 			Path: tempDir,
 		}
@@ -81,7 +81,7 @@ func TestLsTool_Run(t *testing.T) {
 			Input: string(paramsJSON),
 		}
 
-		response, err := tool.Run(context.Background(), call)
+		response, err := tool.Run(lsTestCtx(t), call)
 		require.NoError(t, err)
 
 		// Check that visible directories and files are included
@@ -101,7 +101,7 @@ func TestLsTool_Run(t *testing.T) {
 	})
 
 	t.Run("handles non-existent path", func(t *testing.T) {
-		tool := NewLsTool()
+		tool := NewLsTool(&recordingPermissions{grant: true})
 		params := LSParams{
 			Path: filepath.Join(tempDir, "non_existent_dir"),
 		}
@@ -114,7 +114,7 @@ func TestLsTool_Run(t *testing.T) {
 			Input: string(paramsJSON),
 		}
 
-		response, err := tool.Run(context.Background(), call)
+		response, err := tool.Run(lsTestCtx(t), call)
 		require.NoError(t, err)
 		assert.Contains(t, response.Content, "path does not exist")
 	})
@@ -123,7 +123,7 @@ func TestLsTool_Run(t *testing.T) {
 		// For this test, we need to mock the config.WorkingDirectory function
 		// Since we can't easily do that, we'll just check that the response doesn't contain an error message
 
-		tool := NewLsTool()
+		tool := NewLsTool(&recordingPermissions{grant: true})
 		params := LSParams{
 			Path: "",
 		}
@@ -136,7 +136,7 @@ func TestLsTool_Run(t *testing.T) {
 			Input: string(paramsJSON),
 		}
 
-		response, err := tool.Run(context.Background(), call)
+		response, err := tool.Run(lsTestCtx(t), call)
 		require.NoError(t, err)
 
 		// The response should either contain a valid directory listing or an error
@@ -145,19 +145,19 @@ func TestLsTool_Run(t *testing.T) {
 	})
 
 	t.Run("handles invalid parameters", func(t *testing.T) {
-		tool := NewLsTool()
+		tool := NewLsTool(&recordingPermissions{grant: true})
 		call := ToolCall{
 			Name:  LSToolName,
 			Input: "invalid json",
 		}
 
-		response, err := tool.Run(context.Background(), call)
+		response, err := tool.Run(lsTestCtx(t), call)
 		require.NoError(t, err)
 		assert.Contains(t, response.Content, "error parsing parameters")
 	})
 
 	t.Run("respects ignore patterns", func(t *testing.T) {
-		tool := NewLsTool()
+		tool := NewLsTool(&recordingPermissions{grant: true})
 		params := LSParams{
 			Path:   tempDir,
 			Ignore: []string{"file1.txt", "dir1"},
@@ -171,7 +171,7 @@ func TestLsTool_Run(t *testing.T) {
 			Input: string(paramsJSON),
 		}
 
-		response, err := tool.Run(context.Background(), call)
+		response, err := tool.Run(lsTestCtx(t), call)
 		require.NoError(t, err)
 
 		// The output format is a tree, so we need to check for specific patterns
@@ -195,7 +195,7 @@ func TestLsTool_Run(t *testing.T) {
 		err = os.Chdir(parentDir)
 		require.NoError(t, err)
 
-		tool := NewLsTool()
+		tool := NewLsTool(&recordingPermissions{grant: true})
 		params := LSParams{
 			Path: filepath.Base(tempDir),
 		}
@@ -208,7 +208,7 @@ func TestLsTool_Run(t *testing.T) {
 			Input: string(paramsJSON),
 		}
 
-		response, err := tool.Run(context.Background(), call)
+		response, err := tool.Run(lsTestCtx(t), call)
 		require.NoError(t, err)
 
 		// Should list the temp directory contents
@@ -454,4 +454,11 @@ func TestListDirectory(t *testing.T) {
 		}
 		assert.True(t, containsDir)
 	})
+}
+
+// lsTestCtx carries a session so out-of-working-directory listings have
+// somewhere to prompt; the tests pair it with an allow-all permission stub.
+func lsTestCtx(t *testing.T) context.Context {
+	t.Helper()
+	return ctxWithSession(t)
 }

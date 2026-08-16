@@ -129,6 +129,9 @@ func (t *fetchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 			Action:      "fetch",
 			Description: fmt.Sprintf("Fetch content from URL: %s", params.URL),
 			Params:      FetchPermissionsParams(params),
+			// Path is the working directory for every fetch, so the URL is what
+			// makes one approval distinct from the next.
+			Fingerprint: params.URL,
 		},
 	)
 

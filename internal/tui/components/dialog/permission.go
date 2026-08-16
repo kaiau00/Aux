@@ -174,7 +174,7 @@ func (p *permissionDialogCmp) renderButtons() string {
 	}
 
 	allowButton := allowStyle.Padding(0, 1).Render("Allow (a)")
-	allowSessionButton := allowSessionStyle.Padding(0, 1).Render("Allow for session (s)")
+	allowSessionButton := allowSessionStyle.Padding(0, 1).Render(allowSessionLabel(p.permission))
 	denyButton := denyStyle.Padding(0, 1).Render("Deny (d)")
 
 	content := lipgloss.JoinHorizontal(
@@ -507,6 +507,24 @@ func (c *permissionDialogCmp) GetOrSetMarkdown(key string, generator func() (str
 	c.markdownCache[key] = content
 
 	return content
+}
+
+// allowSessionLabel describes what a session-wide grant actually covers. Tools
+// that set a permission Fingerprint are approved one specific action at a time
+// (see internal/permission), so the button must not imply that approving this
+// command also approves every later command in the session.
+func allowSessionLabel(p permission.PermissionRequest) string {
+	if p.Fingerprint == "" {
+		return "Allow for session (s)"
+	}
+	switch p.ToolName {
+	case "bash":
+		return "Allow this command for session (s)"
+	case "fetch":
+		return "Allow this URL for session (s)"
+	default:
+		return "Allow this for session (s)"
+	}
 }
 
 func NewPermissionDialogCmp() PermissionDialogCmp {

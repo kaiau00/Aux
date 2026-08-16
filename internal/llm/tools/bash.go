@@ -276,6 +276,10 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 				Params: BashPermissionsParams{
 					Command: params.Command,
 				},
+				// Path is the working directory for every command, so without
+				// the command itself in the key, approving one command for the
+				// session would authorize every later command in that session.
+				Fingerprint: params.Command,
 			},
 		)
 		if !p {
