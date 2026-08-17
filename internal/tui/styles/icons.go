@@ -16,13 +16,24 @@ func SupportsUnicode() bool {
 	if v := os.Getenv("AUX_ASCII_ICONS"); v == "1" || strings.EqualFold(v, "true") {
 		return false
 	}
+	if v := os.Getenv("AUX_UNICODE_ICONS"); v == "1" || strings.EqualFold(v, "true") {
+		return true
+	}
 	for _, env := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
 		v := os.Getenv(env)
 		if v == "" {
 			continue
 		}
 		upper := strings.ToUpper(v)
-		return upper != "C" && upper != "POSIX" && !strings.HasPrefix(upper, "C.")
+		// A locale that names an encoding is trusted over its language part.
+		// C.UTF-8 is the default on most Linux distributions, container images,
+		// and CI runners, and it supports Unicode fully — an earlier version
+		// treated every locale beginning "C." as ASCII-only and so degraded the
+		// icons for a large share of Linux users.
+		if strings.Contains(upper, "UTF-8") || strings.Contains(upper, "UTF8") {
+			return true
+		}
+		return upper != "C" && upper != "POSIX"
 	}
 	return true
 }

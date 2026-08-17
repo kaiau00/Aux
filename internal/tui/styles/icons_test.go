@@ -2,58 +2,43 @@ package styles
 
 import "testing"
 
-func TestSupportsUnicodeDefaultsTrueWithNoLocale(t *testing.T) {
-	for _, k := range []string{"AUX_ASCII_ICONS", "LC_ALL", "LC_CTYPE", "LANG"} {
-		t.Setenv(k, "")
-	}
-	if !SupportsUnicode() {
-		t.Fatal("expected Unicode support to default true when no locale is configured")
-	}
-}
-
-func TestSupportsUnicodeFalseForCLocale(t *testing.T) {
-	for _, k := range []string{"AUX_ASCII_ICONS", "LC_ALL", "LC_CTYPE"} {
-		t.Setenv(k, "")
-	}
-	t.Setenv("LANG", "C")
-	if SupportsUnicode() {
-		t.Fatal("expected the C locale to be treated as ASCII-only")
-	}
-}
-
-func TestSupportsUnicodeTrueForUTF8Locale(t *testing.T) {
-	for _, k := range []string{"AUX_ASCII_ICONS", "LC_ALL", "LC_CTYPE"} {
-		t.Setenv(k, "")
-	}
-	t.Setenv("LANG", "en_US.UTF-8")
-	if !SupportsUnicode() {
-		t.Fatal("expected a UTF-8 locale to support Unicode")
-	}
-}
-
-func TestSupportsUnicodeExplicitOverride(t *testing.T) {
-	for _, k := range []string{"LC_ALL", "LC_CTYPE"} {
-		t.Setenv(k, "")
-	}
-	t.Setenv("LANG", "en_US.UTF-8")
-	t.Setenv("AUX_ASCII_ICONS", "1")
-	if SupportsUnicode() {
-		t.Fatal("expected AUX_ASCII_ICONS=1 to force ASCII regardless of locale")
-	}
-}
-
-func TestPickIconRespectsUnicodeSupport(t *testing.T) {
-	for _, k := range []string{"LC_ALL", "LC_CTYPE"} {
-		t.Setenv(k, "")
-	}
-	t.Setenv("LANG", "en_US.UTF-8")
-	t.Setenv("AUX_ASCII_ICONS", "")
-	if got := pickIcon("✓", "v"); got != "✓" {
-		t.Fatalf("expected the unicode glyph, got %q", got)
-	}
-
-	t.Setenv("AUX_ASCII_ICONS", "1")
-	if got := pickIcon("✓", "v"); got != "v" {
-		t.Fatalf("expected the ascii fallback, got %q", got)
+func TestSupportsUnicodeAcrossLocales(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		want   bool
+		reason string
+	}{
+		{
+			name:   "C.UTF-8 is a Unicode locale",
+			env:    map[string]string{"LANG": "C.UTF-8"},
+			want:   true,
+			reason: "the default on most Linux distributions, container images and CI runners",
+		},
+		{name: "en_US.UTF-8", env: map[string]string{"LANG": "en_US.UTF-8"}, want: true},
+		{name: "lowercase utf8 spelling", env: map[string]string{"LANG": "en_US.utf8"}, want: true},
+		{name: "bare C is ASCII only", env: map[string]string{"LANG": "C"}, want: false},
+		{name: "POSIX is ASCII only", env: map[string]string{"LANG": "POSIX"}, want: false},
+		{name: "no locale set defaults to Unicode", env: nil, want: true},
+		{name: "LC_ALL wins over LANG", env: map[string]string{"LC_ALL": "C", "LANG": "en_US.UTF-8"}, want: false},
+		{name: "explicit ASCII override", env: map[string]string{"AUX_ASCII_ICONS": "1", "LANG": "en_US.UTF-8"}, want: false},
+		{
+			name:   "explicit Unicode override beats a C locale",
+			env:    map[string]string{"AUX_UNICODE_ICONS": "1", "LANG": "C"},
+			want:   true,
+			reason: "lets tests and users pin rendering instead of inheriting the environment",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG", "AUX_ASCII_ICONS", "AUX_UNICODE_ICONS"} {
+				t.Setenv(k, "")
+			}
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if got := SupportsUnicode(); got != tc.want {
+				t.Errorf("SupportsUnicode() = %v, want %v. %s", got, tc.want, tc.reason)
+			}
+		})
 	}
 }

@@ -46,6 +46,13 @@ jobs:
       # share state across goroutines, and a data race there is exactly the
       # kind of bug local single-run testing misses.
       - name: go test
+        # The golden snapshots record the Unicode rendering, and icon selection
+        # is decided at package init from the ambient locale, so it cannot be
+        # set from within a test. Pinning it here keeps the snapshots comparing
+        # UI changes rather than the runner's locale — a runner image changing
+        # LANG should not read as a visual regression.
+        env:
+          AUX_UNICODE_ICONS: "1"
         run: go test -race ./...
 
       # This repository has repeatedly shipped subsystems that were complete,
