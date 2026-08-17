@@ -87,6 +87,13 @@ func Gate(baseline, candidate SuiteRun, th Thresholds) Verdict {
 		case actual > float64(v.Baseline.TotalTokens):
 			v.Failures = append(v.Failures, fmt.Sprintf(
 				"tokens rose from %d to %d", v.Baseline.TotalTokens, v.Candidate.TotalTokens))
+		case actual == float64(v.Baseline.TotalTokens):
+			// Distinguished from a real reduction on purpose: reporting an
+			// unchanged number as a saving is the exact overstatement this gate
+			// exists to prevent.
+			v.Notes = append(v.Notes, fmt.Sprintf(
+				"tokens unchanged at %d; the %.0f target was not approached",
+				v.Candidate.TotalTokens, budget))
 		case actual > budget:
 			// Not a regression, just short of target. Saying so plainly beats
 			// failing a build for a change that made things better.

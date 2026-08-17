@@ -190,3 +190,21 @@ func TestSummarizeAggregatesCorrectly(t *testing.T) {
 		t.Fatal("one unknown-cost run must taint the aggregate, or an unmeasurable cost reads as a cheap one")
 	}
 }
+
+// Reporting an unchanged number as a saving is the overstatement this gate
+// exists to prevent, so "unchanged" and "fell short of target" are distinct.
+func TestUnchangedTokensAreNotDescribedAsFalling(t *testing.T) {
+	same := run(task("a", true, 1000, 10))
+
+	v := Gate(same, same, DefaultThresholds())
+	if !v.Passed {
+		t.Fatalf("an identical run should pass, got %v", v.Failures)
+	}
+	notes := strings.Join(v.Notes, " ")
+	if strings.Contains(notes, "fell") {
+		t.Fatalf("identical token counts must not be reported as a reduction: %q", notes)
+	}
+	if !strings.Contains(notes, "unchanged") {
+		t.Fatalf("expected the note to say tokens were unchanged, got %q", notes)
+	}
+}
