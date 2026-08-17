@@ -453,7 +453,7 @@ func (a *App) RunNonInteractive(ctx context.Context, prompt string, outputFormat
 		content = result.Message.Content().String()
 	}
 
-	fmt.Println(format.FormatOutput(content, outputFormat))
+	fmt.Println(format.FormatOutput(content, sess.ID, outputFormat))
 
 	logging.Info("Non-interactive run completed", "session_id", sess.ID)
 
