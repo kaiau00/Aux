@@ -102,7 +102,7 @@ To gate a change, record a baseline, make the change, run again, and compare:
 		if repeat < 2 {
 			fmt.Println("Note: fewer than 2 runs cannot show a noise floor, and single-run" +
 				"\ncomparisons of an agent are not reproducible. Use --repeat 3 or more" +
-				"\nbefore drawing any conclusion from these numbers.\n")
+				"\nbefore drawing any conclusion from these numbers.")
 		}
 
 		runner := evalsuite.NewRunner(evalsuite.ShellExecutor{Timeout: timeout}, h)
