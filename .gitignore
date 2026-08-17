@@ -45,3 +45,8 @@ Thumbs.db
 
 aux
 aux.md
+
+# Benchmark runs are machine-specific (absolute repo paths, local model, wall
+# clock). The suite and its specs are committed; results are not.
+bench/*.json
+!bench/suite.example.json

@@ -297,6 +297,12 @@ func configureViper() {
 	viper.AddConfigPath(fmt.Sprintf("$XDG_CONFIG_HOME/%s", appName))
 	viper.AddConfigPath(fmt.Sprintf("$HOME/.config/%s", appName))
 	viper.SetEnvPrefix(strings.ToUpper(appName))
+	// Nested keys are dotted ("data.directory"), and a dot cannot appear in an
+	// environment variable name. Without this replacer AutomaticEnv silently
+	// covered only single-word top-level keys, so every documented-looking
+	// override — AUX_DATA_DIRECTORY, AUX_DASHBOARD_ENABLED — did nothing at all
+	// and gave no indication of it.
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 }
 
