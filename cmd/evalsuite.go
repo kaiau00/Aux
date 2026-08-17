@@ -23,7 +23,18 @@ func (m ledgerMetrics) TaskMetrics(ctx context.Context, sessionID string) (int64
 	if err != nil {
 		return 0, 0, 0, 0, false, err
 	}
-	return totals.InputTokens, totals.OutputTokens, totals.Calls, totals.Cost, totals.CostUnknown, nil
+	// Cached and cache-creation tokens count towards input, matching how the
+	// opencode harness sums them. The ledger stores InputTokens net of cache, so
+	// reporting it raw would measure the two harnesses differently: after
+	// cached-token accounting was fixed, the same workload appeared to drop from
+	// ~588k tokens to ~67k, which is the cache becoming visible rather than any
+	// change in what was sent.
+	//
+	// Total prompt tokens is the right figure here because the benchmark asks
+	// how much context a harness sends. What that costs is a separate question,
+	// answered by Cost, which prices cached tokens at the cache rate.
+	input := totals.InputTokens + totals.CacheReadTokens + totals.CacheCreationTokens
+	return input, totals.OutputTokens, totals.Calls, totals.Cost, totals.CostUnknown, nil
 }
 
 var evalSuiteCmd = &cobra.Command{
