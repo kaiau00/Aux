@@ -3,6 +3,9 @@ project_name: aux
 before:
   hooks:
 builds:
+  # macOS and Linux only. internal/llm/tools/shell is Unix-only -- it redirects
+  # through /dev/null and uses syscall process groups -- so a Windows binary
+  # would build and then fail at the first shell command.
   - env:
       - CGO_ENABLED=0
     goos:
@@ -20,15 +23,11 @@ archives:
     name_template: >-
       aux-
       {{- if eq .Os "darwin" }}mac-
-      {{- else if eq .Os "windows" }}windows-
       {{- else if eq .Os "linux" }}linux-{{end}}
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "#86" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    format_overrides:
-      - goos: windows
-        format: zip
 checksum:
   name_template: "checksums.txt"
 snapshot:

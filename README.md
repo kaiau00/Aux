@@ -52,6 +52,12 @@ Two more things that fall directly out of this design:
 
 ## Quick start
 
+### Requirements
+
+macOS and Linux, on x86_64 or arm64. Windows is not supported: the shell tool
+depends on Unix process semantics, so a Windows build would compile and then
+fail at the first command it ran.
+
 ### Install
 
 ```bash
