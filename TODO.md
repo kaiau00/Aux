@@ -209,44 +209,7 @@ clear failure message when migration fails, and a documented recovery path.
   directory, not a git repository — each should produce a message that says what
   to do.
 
-### P1.5 — First-run experience: wire up what already exists
-
-**Most of this was already built and never called.** `internal/welcome` has
-`ShouldShow` (detects first boot via a flag file in the data directory),
-`buildIntroBody`, and `MaybeShow` — which creates a welcome session and message
-and is careful to be non-fatal so a failed welcome cannot block startup. Nothing
-in `internal/app` or `cmd` invokes any of it. The reachability gate found it;
-the earlier hand-audits did not.
-
-So this item is smaller than it looked, and split in two:
-
-1. **Wire `welcome.MaybeShow` into startup**, or delete the package. It is a
-   real decision — read the intro body first and check it still describes the
-   product accurately before switching it on, since it predates the security
-   work and the dashboard's current shape.
-2. **Then the genuinely missing documentation**: what Aux *is*, what it sends to
-   a provider, and where its data lives. A new user's first question is "what is
-   this about to do on my machine," and the security posture is a selling point
-   that is currently undocumented.
-
-### P1.6 — Define supported platforms
-
-Currently undefined, and the configuration contradicts itself:
-
-- `.goreleaser.yml` builds **linux and darwin only** (`goos: [linux, darwin]`),
-  but the `archives` block carries a `goos: windows` override producing a zip —
-  for a target the build never emits.
-- `internal/llm/tools/shell/shell.go` is Unix-only regardless: `/dev/null`
-  redirection, `syscall` process kills.
-
-So the release config gestures at Windows, the code cannot support it, and
-nothing states the real answer. This is the first thing a new user hits.
-
-Decide and then make everything agree: drop the dead Windows archive rule and
-say "macOS and Linux" in the README, or do the work to support Windows. The
-former is a ten-minute change; the latter is a project.
-
-### P1.7 — User-defined hooks: build them or drop them
+### P1.5 — User-defined hooks: build them or drop them
 
 The `hooks` package dispatches seven lifecycle points and has registered
 observability handlers, but there is **no hook configuration in
@@ -399,6 +362,8 @@ Closed since (on `main`):
 | --- | --- |
 | P0.4 | PR #1 merged; work continues directly on `main` |
 | P0.1b | `--repeat`, `Series`, and an exact two-sided rank test; three runs a side cannot reach p<=0.05 and the tool says so |
+| P1.6 (platforms) | macOS and Linux stated in the README; the Windows archive rules for a target never built are gone |
+| P1.5 (first run) | `welcome` wired into interactive startup and removed from the reachability baseline; the intro now states what leaves the machine, that commands ask first, and where state is stored |
 
 Struck as invalid after verification:
 
