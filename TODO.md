@@ -97,6 +97,57 @@ non-interactive runs bypass every permission prompt. That is what makes
 automation possible and it means benchmark repositories must be scratch
 checkouts you are willing to have modified and reset.
 
+### P0.1b — Run-to-run variance makes single-run comparison useless (BLOCKING)
+
+**Found by running the harness. It is the most important result so far, and it
+is a finding about the benchmark rather than about Aux.**
+
+Two runs of the *identical* configuration on the same five tasks:
+
+| | run 1 | run 2 | difference |
+| --- | --- | --- | --- |
+| tokens | 658,715 | 334,357 | **−49%** |
+| turns | 35 | 19 | −46% |
+| passed | 5/5 | 4/5 | one task regressed |
+
+Per task the swing is worse: +26%, −42%, −61%, −5%, −78%. `parse-currency` was
+solved in one run (10 turns) and abandoned in the other (2 turns, function never
+written).
+
+**Consequence: the gate produces confident verdicts from noise.** Feeding it the
+two baseline runs — same configuration, no change whatsoever — yields:
+
+- run1 as baseline → *PASSED*, "tokens fell 49%"
+- run2 as baseline → *FAILED*, "tokens rose from 334,357 to 658,715; turns past
+  the ceiling: this is usually thrashing"
+
+Opposite conclusions, identical inputs.
+
+**This voids the paging measurement.** Demand paging measured −26% tokens with
+no capability loss, which looked like the evidence P2.2 was waiting for. The
+noise floor is −49%, roughly twice the effect. That result means nothing, and
+70% of it came from a single task. The paging default must not move on it.
+
+**What the harness needs before any number from it can be trusted:**
+
+1. **Repetition.** `--repeat N` per configuration, with the gate comparing
+   distributions — median and spread — rather than single values.
+2. **A variance report**, so the noise floor is visible next to any claimed
+   effect. An effect smaller than the spread is not an effect.
+3. **Reconsidered thresholds.** A 30% token target is not detectable against
+   this much variance at n=1. Either the sample grows until it is, or the gate
+   only ever certifies large effects.
+4. **Per-task output in the report.** The −26% aggregate was 70% one task; only
+   the per-task breakdown showed it, and that was checked by hand.
+
+How much repetition is an empirical question, not something to assume. Start by
+measuring the noise floor properly — five baseline runs, no changes — and size
+the sample from what that shows.
+
+The deeper lesson matches P0.2's: an unmeasured assumption sounds exactly like a
+measured fact. "The gate works" was true mechanically and false in practice, and
+one extra run was all it took to find out.
+
 ### P0.2 — SQLite concurrency ✅ closed, and mostly a false alarm
 
 **The version of this item written on 2026-08-16 was largely wrong, and
@@ -287,10 +338,15 @@ context loss. That is the entire reason it has not been built.
 
 ### P2.2 — Decide demand paging's default
 
-`--paging` exists and defaults to off. `aux eval compiler` measures exactly
-whether paging is lossless. Run it, publish the number, flip the default on
-evidence. A centerpiece feature that ships disabled is a feature that does not
-exist.
+`--paging` exists and defaults to off. A first measurement on the
+receipt-pipeline suite showed −26% tokens with 5/5 tasks still passing — and it
+must not be acted on: **P0.1b showed the noise floor is −49%**, twice the
+effect, and 70% of the reduction came from one task. The result is inside the
+noise.
+
+Blocked on P0.1b. Once repetition exists, this is the first question to ask of
+it, because the machinery is already built and the run is cheap on a local
+model.
 
 ### P2.3 — Skill promotion path (was B4)
 
