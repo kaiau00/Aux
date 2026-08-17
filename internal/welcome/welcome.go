@@ -85,6 +85,15 @@ func MaybeShow(ctx context.Context, sessions session.Service, messages message.S
 	}
 }
 
+// dataDirForDisplay names where Aux keeps its local state, so the intro can be
+// concrete about it rather than vague.
+func dataDirForDisplay() string {
+	if cfg := config.Get(); cfg != nil && cfg.Data.Directory != "" {
+		return cfg.Data.Directory
+	}
+	return ".aux"
+}
+
 func buildIntroBody(dash *dashboard.Server) string {
 	var b strings.Builder
 	b.WriteString("```\n")
@@ -106,6 +115,15 @@ func buildIntroBody(dash *dashboard.Server) string {
 		b.WriteString("**Dashboard**\n")
 		b.WriteString("The local dashboard is currently disabled. Enable it with `dashboard.enabled: true` in your aux config to get a live web view of this session.\n\n")
 	}
+
+	// What a new user's first question actually is. Aux reads their files and
+	// sends them to a provider, so saying so plainly on first boot is part of
+	// the product rather than an appendix to it.
+	b.WriteString("**What I do with your code**\n")
+	b.WriteString("- Files I read are sent to your configured model provider as context. The right-hand pane lists everything currently in that context, and `x` drops a file from it.\n")
+	b.WriteString("- Running commands, editing files, and fetching URLs each ask first. Approving one command approves that command, not every later one.\n")
+	b.WriteString("- Reads outside this project directory ask before they happen.\n")
+	b.WriteString(fmt.Sprintf("- Sessions, messages, and costs are stored locally in `%s`. Nothing is sent anywhere else.\n\n", dataDirForDisplay()))
 
 	b.WriteString("Just say hi or describe what you'd like to build — I'll take it from here. ")
 	return b.String()

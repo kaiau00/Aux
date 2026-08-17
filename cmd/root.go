@@ -14,7 +14,9 @@ import (
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/tui"
+	"github.com/aux-ai/aux-cli/internal/tui/components/chat"
 	"github.com/aux-ai/aux-cli/internal/version"
+	"github.com/aux-ai/aux-cli/internal/welcome"
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
 	"github.com/spf13/cobra"
@@ -124,13 +126,30 @@ to assist developers in writing, debugging, and understanding code directly from
 			return app.RunNonInteractive(ctx, prompt, outputFormat, quiet)
 		}
 
-		// Interactive mode
+		// Interactive mode.
+		//
+		// The first-boot welcome runs before the TUI starts so its session
+		// exists in time to be opened as the initial view. It is best-effort by
+		// construction: a failure returns an empty Result rather than an error,
+		// because nothing about an introduction should be able to stop Aux from
+		// starting.
+		intro := welcome.MaybeShow(ctx, app.Sessions, app.Messages, app.Dashboard)
+
 		// Set up the TUI
 		zone.NewGlobal()
 		program := tea.NewProgram(
 			tui.New(app),
 			tea.WithAltScreen(),
 		)
+
+		// Open the welcome session once the program is running. Sending before
+		// Run would race the model's initialisation, so this waits for the
+		// program to accept messages.
+		if intro.Shown {
+			go func() {
+				program.Send(chat.SessionSelectedMsg(intro.Session))
+			}()
+		}
 
 		// Setup the subscriptions, this will send services events to the TUI
 		ch, cancelSubs := setupSubscriptions(app, ctx)

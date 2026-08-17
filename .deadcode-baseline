@@ -17,9 +17,8 @@
 # blocked behind deleting or wiring them. Do not add anything here to make a
 # build pass.
 #
-# - internal/welcome: a complete first-run onboarding flow. TODO.md P1.5 records
-#   "no first-run documentation" as an open item; it turns out most of it was
-#   already written and simply never called from app startup.
+# - internal/welcome: RESOLVED. Wired into interactive startup; the intro now
+#   also states what Aux sends to a provider and where it stores state.
 # - sidebar.go: an entire chat sidebar component, superseded by the context pane
 #   but never removed.
 # - diff/patch.go: a public patch-application API with no callers; the patch
@@ -46,9 +45,6 @@ internal/tui/components/chat/sidebar.go: sidebarCmp.modifiedFile
 internal/tui/components/chat/sidebar.go: sidebarCmp.modifiedFiles
 internal/tui/components/chat/sidebar.go: sidebarCmp.processFileChanges
 internal/tui/components/chat/sidebar.go: sidebarCmp.sessionSection
-internal/welcome/welcome.go: MaybeShow
-internal/welcome/welcome.go: ShouldShow
-internal/welcome/welcome.go: buildIntroBody
 
 # ---------------------------------------------------------------------------
 # ACCEPTED — deliberately unreachable, no action needed.
