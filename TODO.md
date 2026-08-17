@@ -180,15 +180,7 @@ Priority order for outside eyes:
 3. **One real user on a real repository for a week.** Someone who does not know
    where the sharp edges are will find things no audit will.
 
-### P1.2 — Coverage gate in CI
-
-`.github/workflows/test.yml` runs gofmt, `go vet`, `go test -race ./...`, and
-the reachability gate. There is no coverage measurement, against a stated 80%
-bar. Add
-`-coverprofile`, publish the number, and fail below an agreed floor. Start the
-floor at wherever the tree currently sits so it ratchets rather than blocks.
-
-### P1.3 — Upgrade and migration safety
+### P1.2 — Upgrade and migration safety
 
 `goose.Up` runs on every `Connect` ([`connect.go:63`](internal/db/connect.go)).
 Untested: what happens when a user upgrades with an existing database, when a
@@ -199,7 +191,7 @@ across schema changes.
 Needs: a test that migrates a populated database from an older schema forward, a
 clear failure message when migration fails, and a documented recovery path.
 
-### P1.4 — Failure behaviour
+### P1.3 — Failure behaviour
 
 - **Panic recovery.** A panic in the agent goroutine should not take down the
   TUI and lose the session.
@@ -209,7 +201,7 @@ clear failure message when migration fails, and a documented recovery path.
   directory, not a git repository — each should produce a message that says what
   to do.
 
-### P1.5 — User-defined hooks: build them or drop them
+### P1.4 — User-defined hooks: build them or drop them
 
 The `hooks` package dispatches seven lifecycle points and has registered
 observability handlers, but there is **no hook configuration in
@@ -363,6 +355,7 @@ Closed since (on `main`):
 | P0.4 | PR #1 merged; work continues directly on `main` |
 | P0.1b | `--repeat`, `Series`, and an exact two-sided rank test; three runs a side cannot reach p<=0.05 and the tool says so |
 | P1.6 (platforms) | macOS and Linux stated in the README; the Windows archive rules for a target never built are gone |
+| P1.2 (coverage) | `scripts/coverage.sh` ratchets against `.coverage-floor`, starting at the 30.5% the tree actually achieves. Verified to fail on a drop and to ask for the floor to be raised on a gain. The gap to the stated 80% bar is real and unclosed; the gate only stops it widening |
 | P1.5 (first run) | `welcome` wired into interactive startup and removed from the reachability baseline; the intro now states what leaves the machine, that commands ask first, and where state is stored |
 
 Struck as invalid after verification:

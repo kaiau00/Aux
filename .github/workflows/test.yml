@@ -61,3 +61,9 @@ jobs:
       # on something newly unreachable.
       - name: reachability
         run: ./scripts/deadcode.sh
+
+      # Ratchets against .coverage-floor. The floor starts at what the tree
+      # already achieves rather than at the 80% target, so it stops coverage
+      # regressing without blocking every change until that target is met.
+      - name: coverage
+        run: ./scripts/coverage.sh
