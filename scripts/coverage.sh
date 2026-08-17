@@ -25,7 +25,9 @@ FLOOR_FILE=".coverage-floor"
 # for a reason unrelated to coverage.
 export AUX_UNICODE_ICONS=1
 
-profile="$(mktemp -t auxcov)"
+# Plain mktemp: BSD (macOS) accepts a bare -t prefix, GNU requires X's in the
+# template, and no-argument mktemp is the form both agree on.
+profile="$(mktemp)"
 trap 'rm -f "$profile"' EXIT
 
 if ! go test -coverprofile="$profile" ./... >/dev/null 2>&1; then
