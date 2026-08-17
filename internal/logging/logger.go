@@ -1,16 +1,23 @@
 package logging
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	// "path/filepath"
-	"encoding/json"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sync"
 	"time"
 )
+
+// PanicDir is where RecoverPanic writes crash logs. config points it at the
+// data directory during startup; config imports this package, so it cannot be
+// read from here. Until it is set -- early startup, and tests -- crash logs
+// fall back to the working directory, on the principle that a badly placed
+// crash log still beats a lost one.
+var PanicDir string
 
 func getCaller() string {
 	var caller string
@@ -72,8 +79,17 @@ func RecoverPanic(name string, cleanup func()) {
 		// Create a timestamped panic log file
 		timestamp := time.Now().Format("20060102-150405")
 		filename := fmt.Sprintf("aux-panic-%s-%s.log", name, timestamp)
+		if PanicDir != "" {
+			if err := os.MkdirAll(PanicDir, 0o755); err != nil {
+				ErrorPersist(fmt.Sprintf("Failed to create panic log directory: %v", err))
+			} else {
+				filename = filepath.Join(PanicDir, filename)
+			}
+		}
 
-		file, err := os.Create(filename)
+		// 0600, for the same reason the debug log uses it: a panic value or a
+		// stack frame can carry whatever the agent was holding when it died.
+		file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			ErrorPersist(fmt.Sprintf("Failed to create panic log: %v", err))
 		} else {

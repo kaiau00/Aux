@@ -193,8 +193,22 @@ clear failure message when migration fails, and a documented recovery path.
 
 ### P1.3 — Failure behaviour
 
-- **Panic recovery.** A panic in the agent goroutine should not take down the
-  TUI and lose the session.
+- **Panic recovery.** ✅ closed, and the claim as written was wrong again.
+  Recovery already existed — `logging.RecoverPanic` wraps the agent goroutine,
+  the TUI message handler, every subscription and `main` — so a panic never took
+  down the TUI. The defect was in what recovery *skipped*. That goroutine also
+  owns the session's busy marker, the generation context and the event channel,
+  and released all three on its normal path only. So a panic left the session
+  permanently busy — the editor refuses input for it for the rest of the process
+  — and left any consumer ranging over the channel blocked forever. The recovery
+  handler's own send was unbuffered on top of that, so once no consumer
+  remained it deadlocked *inside the handler*, wedging the session with no
+  visible symptom at all. `Summarize`, twenty lines below in the same file, had
+  the deferred form right. Fixed with deferred teardown and a one-slot buffer.
+
+  Found next to it: crash logs went to the process's working directory, so a
+  panic dropped `aux-panic-*.log` into the user's repository at 0644. Now
+  `.aux/` at 0600, on the same reasoning that made the debug log 0600.
 - **Silent-failure sweep.** The pragma case above is one instance; audit for
   others where an error is logged and execution proceeds as if nothing happened.
 - **First-run and misconfiguration.** No provider key, unwritable data
