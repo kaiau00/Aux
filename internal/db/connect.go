@@ -24,33 +24,23 @@ func Connect() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 	dbPath := filepath.Join(dataDir, "aux.db")
-	// Open the SQLite database
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", DSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Verify connection
+	// Verify connection. Pragmas are applied at connect time, so a bad one
+	// surfaces here rather than being logged and ignored.
 	if err = db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Set pragmas for better performance
-	pragmas := []string{
-		"PRAGMA foreign_keys = ON;",
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA page_size = 4096;",
-		"PRAGMA cache_size = -8000;",
-		"PRAGMA synchronous = NORMAL;",
-	}
+	tunePool(db)
 
-	for _, pragma := range pragmas {
-		if _, err = db.Exec(pragma); err != nil {
-			logging.Error("Failed to set pragma", pragma, err)
-		} else {
-			logging.Debug("Set pragma", "pragma", pragma)
-		}
+	if err := verifyPragmas(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("database is not configured as expected: %w", err)
 	}
 
 	goose.SetBaseFS(FS)

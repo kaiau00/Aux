@@ -20,21 +20,14 @@ import (
 func New(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "aux-test.db")
-	conn, err := sql.Open("sqlite3", path)
+	// Open exactly the way production does, so tests exercise the real pragma
+	// set on every connection rather than a hand-maintained copy that can drift
+	// from it.
+	conn, err := sql.Open("sqlite3", db.DSN(path))
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-
-	for _, pragma := range []string{
-		"PRAGMA foreign_keys = ON;",
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA synchronous = NORMAL;",
-	} {
-		if _, err := conn.Exec(pragma); err != nil {
-			t.Fatalf("pragma %q: %v", pragma, err)
-		}
-	}
 
 	goose.SetBaseFS(db.FS)
 	if err := goose.SetDialect("sqlite3"); err != nil {

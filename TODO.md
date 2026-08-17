@@ -27,9 +27,18 @@ Three things drive that judgment:
 ## Definition of done
 
 "Production ready" means: **someone who is not the author can install Aux, use
-it on their own repository for a week, and depend on the result.** Concretely,
-all of P0 and P1 below are closed. This definition exists so the claim stays
-falsifiable rather than becoming a vibe.
+it on their own repository for a week, and depend on the result.**
+
+Concretely: all of P0 and P1 closed, **and** a soak period afterwards in which
+external findings taper off. The second half is not padding. A checklist
+assembled by the people who wrote the code cannot enumerate what they cannot
+see, and P1.1 exists specifically to lengthen the list — if outside review
+produces no new items, the review was shallow rather than the list complete. So
+the signal is not "the list is empty", it is **the rate at which the list grows
+falling below the rate it is closed**.
+
+This definition exists so the claim stays falsifiable rather than becoming a
+vibe.
 
 ---
 
@@ -65,37 +74,45 @@ ask. Pair the suite with a hard policy layer that is *not* subject to eval
 outcomes — destructive operations always require explicit user intent, whatever
 the numbers say.
 
-### P0.2 — SQLite concurrency: fix, then measure (was A6)
+### P0.2 — SQLite concurrency ✅ closed, and mostly a false alarm
 
-No longer merely unverified. Two concrete findings:
+**The version of this item written on 2026-08-16 was largely wrong, and
+measuring it took about twenty minutes.** Recorded here rather than quietly
+deleted, because how it was wrong matters more than the fix.
 
-- **No `busy_timeout` is set.** [`internal/db/connect.go:39-47`](internal/db/connect.go)
-  sets `journal_mode = WAL`, `synchronous = NORMAL`, and others, but never
-  `busy_timeout`. Under WAL, writers serialize on a write lock; without a busy
-  timeout a blocked writer can fail immediately instead of waiting.
-- **The connection pool is unbounded.** Nothing calls `SetMaxOpenConns` or
-  `SetMaxIdleConns` anywhere, so Go's `database/sql` defaults apply.
+The claim was that `busy_timeout` was unset and foreign keys were therefore at
+risk. Probing the driver directly showed otherwise: `ncruces/go-sqlite3`
+defaults `foreign_keys` to on and `busy_timeout` to 60s **on every connection**,
+and `journal_mode = WAL` is persisted in the database file rather than being
+per-connection. None of the correctness-critical settings were ever at risk.
 
-The agent and the dashboard share one database, and **parallel read-only tool
-execution increased the number of concurrent writers** to `tool_executions`
-(the recorder writes on both `Start` and `Finish`). That change made this
-exposure larger. The recorder logs write failures rather than propagating them,
-so the failure mode is silently missing observability rather than corruption —
-which is worse for diagnosis, not better.
+What was actually true, and is now fixed
+([`internal/db/pragma.go`](internal/db/pragma.go)):
 
-Also: pragma failures are logged and execution continues
-([`connect.go:48-54`](internal/db/connect.go)). If `journal_mode = WAL` ever
-fails to apply, Aux runs in rollback-journal mode and nothing says so.
+- `synchronous` and `cache_size` **are** per-connection, and a `db.Exec` against
+  a pooled `*sql.DB` reaches only whichever connection serves it. Those two
+  applied to one connection. Now set via the DSN so every connection carries
+  them. Note the trap this creates: adding any `_pragma` to the DSN **disables**
+  the driver's automatic busy timeout, so it must now be set explicitly — there
+  is a test pinning that.
+- The pool was unbounded and, at the `database/sql` default of 2 idle
+  connections, a burst of parallel work closed and reopened connections rather
+  than reusing them. Measured: 6 closures per burst at idle=2, zero at idle=8.
+- Pragma failures were logged and ignored. SQLite silently accepts unknown
+  pragmas and unparseable values — only a *syntax* error fails the open — so
+  `verifyPragmas` now reads the critical settings back at startup and refuses to
+  run a database that did not get them.
 
-Work:
-1. Set `busy_timeout` explicitly and bound the pool.
-2. Make a failed pragma fatal, or at minimum surfaced — silent degradation of a
-   durability setting is not acceptable.
-3. **Then measure**: a long agent session with the dashboard open and polling,
-   asserting no dropped tool-execution records and no `SQLITE_BUSY`.
+**The lesson is the reusable part.** This item was escalated to P0 on the
+strength of reading code and reasoning about it, which is exactly the habit the
+rest of this file warns against. Twenty minutes of measurement would have
+prevented writing it. Treat every remaining unmeasured claim in this document,
+including the ones that sound confident, as a hypothesis.
 
-Do the measurement even if the fixes look obviously right. Reasoning about
-contention is what produced this gap in the first place.
+Still open, and genuinely unmeasured: **a long agent session with the dashboard
+open and polling**, asserting no dropped `tool_executions` records under real
+load. The unit tests cover a synthetic burst, not a real session. Folded into
+P1.1's soak period rather than blocking.
 
 ### P0.3 — Systematic reachability audit
 
@@ -172,7 +189,24 @@ expect on a first session, what it sends to a provider, and where its data
 lives. A new user's first question is "what is this about to do on my machine,"
 and the security posture is a selling point that is currently undocumented.
 
-### P1.6 — User-defined hooks: build them or drop them
+### P1.6 — Define supported platforms
+
+Currently undefined, and the configuration contradicts itself:
+
+- `.goreleaser.yml` builds **linux and darwin only** (`goos: [linux, darwin]`),
+  but the `archives` block carries a `goos: windows` override producing a zip —
+  for a target the build never emits.
+- `internal/llm/tools/shell/shell.go` is Unix-only regardless: `/dev/null`
+  redirection, `syscall` process kills.
+
+So the release config gestures at Windows, the code cannot support it, and
+nothing states the real answer. This is the first thing a new user hits.
+
+Decide and then make everything agree: drop the dead Windows archive rule and
+say "macOS and Linux" in the README, or do the work to support Windows. The
+former is a ten-minute change; the latter is a project.
+
+### P1.7 — User-defined hooks: build them or drop them
 
 The `hooks` package dispatches seven lifecycle points and has registered
 observability handlers, but there is **no hook configuration in
@@ -283,24 +317,27 @@ Real, small, or low-confidence. Nothing here blocks production.
 ## Sequencing
 
 ```
-P0.3 (reachability)  ─┐
-P0.2 (sqlite)        ─┼─→ can run in parallel, all small
-P0.4 (merge PR)      ─┘
-P0.1 (benchmark)     ────────→ gates everything in P2
-                                    │
-P1.1 (external review) ─────────────┤ ← start as soon as PR #1 merges
-P1.2–P1.6              ─────────────┤
-                                    ↓
-                              P2.1 … P2.6
+P0.2 (sqlite)          ── done
+P0.3 (reachability)    ─┐
+P0.4 (merge PR)        ─┴─→ days of work, independent
+P0.1 (benchmark)       ────────→ gates everything in P2
+                                      │
+P1.1 (external review) ───────────────┤ ← start as soon as PR #1 merges
+P1.2–P1.7              ───────────────┤
+                                      ↓
+                                P2.1 … P2.6
+                                      ↓
+                            soak until findings taper
 ```
 
-P0.2, P0.3, and P0.4 are days of work. P0.1 is the long pole and the only one
-that needs a decision from you about scope and spend — start it first even
-though it finishes last.
+P0.3 and P0.4 are days of work. P0.1 is the long pole and the only one that
+needs a decision from you about scope and spend — start it first even though it
+finishes last.
 
-If only four things get done: **P0.1, P0.2, P0.3, P1.1.** The first three make
-the system measurable and stop the recurring defect class; the fourth is the
-only one that corrects for everything this file cannot see about itself.
+If only three things remain: **P0.1, P0.3, P1.1.** The first two make the system
+measurable and stop the recurring defect class; the third is the only one that
+corrects for what this file cannot see about itself — as P0.2 demonstrated by
+being wrong.
 
 ---
 
