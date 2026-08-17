@@ -14,6 +14,12 @@
 #
 # Note the floor is well under the 80% this project states as its bar. The gap is
 # real and the gate does not close it; it only stops it widening.
+#
+# The floor is calibrated against CI, not a developer machine. Coverage is
+# platform-dependent -- code behind GOOS-specific paths runs on one and not the
+# other -- and this project measures ~0.6 points lower on the Linux runner than
+# on macOS. A floor taken from a laptop therefore fails in CI for a reason that
+# has nothing to do with the change under test.
 
 set -euo pipefail
 
