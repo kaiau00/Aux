@@ -50,31 +50,52 @@ Nothing in P2 or P3 should be started before these are closed.
 
 ### P0.1 — Stand up the task benchmark (was F)
 
-**Everything else in this file is opinion until this exists.** It also directly
-gates P2.1, P2.2, and P2.3.
+**The harness is built; the suite is not.** That split is deliberate — the
+machinery is engineering, the task list is a judgement call that should not be
+made by whoever wrote the harness.
 
-What exists: `aux eval compiler` (compilers over synthetic fixtures, with a
-`preservesContent` losslessness check), `aux eval experiment`, and
-`eval.ABStores.CompareRuns` for task-level A/B.
+Built (`aux eval suite`, `aux eval gate`, `internal/evalsuite`):
 
-What does not exist: a real task suite. Building it needs API spend and a
-judgment call about which tasks represent real work, so it is a decision, not a
-chore:
+- Suite format with per-task pinned revisions and command-based success. A task
+  with no success command, or no base revision, is rejected at load — the first
+  can never fail and would inflate the success rate; the second measures a
+  moving target.
+- Runner that isolates each task (`reset --hard` to its revision, then `clean`),
+  runs the agent non-interactively, and reads cost from the ledger rather than
+  from agent output. A run whose cost cannot be read is marked unknown, never
+  recorded as zero.
+- **Gate with success rate as a hard floor**, evaluated before any budget: a
+  candidate that halves tokens while solving fewer tasks fails. Per-task
+  regressions fail even when the aggregate rate is level. An empty comparison
+  never passes. Missing the token target while regressing nothing is a note, not
+  a failure.
 
-1. Pick 20–30 tasks across genuinely different repositories, weighted toward
-   ones where the agent was previously corrected — those encode what it gets
-   wrong.
-2. Record a baseline per task: tokens, turns, success rate, wall-clock.
-3. Re-run after each change. Pass criteria: **success rate ≥ baseline (hard
-   floor)**, tokens ≤ 0.7×, turns ≤ 1.1×.
-4. A change that improves tokens and regresses success rate does not ship.
+**What is needed from you: the tasks.** 20–30 across genuinely different
+repositories, weighted toward ones where you previously had to correct the agent
+— those encode what it gets wrong rather than what it was already good at. Mark
+them `corrected: true`; the runner reports how many a suite has, and warns when
+it has none. Start from `bench/suite.example.json`.
 
-Keep this file's original F-caveats in view: team-written evals test what the
-team thinks matters; 20–30 tasks is a thin sample; "≥ baseline" assumes the
-baseline was correct; and evals never capture knowing when to stop or when to
-ask. Pair the suite with a hard policy layer that is *not* subject to eval
-outcomes — destructive operations always require explicit user intent, whatever
-the numbers say.
+Then:
+
+```
+aux eval suite bench/suite.json --save bench/baseline.json
+# make a change
+aux eval suite bench/suite.json --save bench/candidate.json
+aux eval gate bench/baseline.json bench/candidate.json
+```
+
+Keep the original F-caveats in view, because the harness cannot address any of
+them: team-written evals test what the team thinks matters; 20–30 tasks is a
+thin sample; "≥ baseline" assumes the baseline was correct; and no eval captures
+knowing when to stop or when to ask. Pair the suite with a hard policy layer
+that is **not** subject to eval outcomes — destructive operations always require
+explicit user intent, whatever the numbers say.
+
+One thing to know before running it: `aux -p` calls `AutoApproveSession`, so
+non-interactive runs bypass every permission prompt. That is what makes
+automation possible and it means benchmark repositories must be scratch
+checkouts you are willing to have modified and reset.
 
 ### P0.2 — SQLite concurrency ✅ closed, and mostly a false alarm
 
@@ -364,8 +385,8 @@ P1.2–P1.7              ───────────────┤
                             soak until findings taper
 ```
 
-P0.1 is now the only P0 item left that is real work, and the only one needing a
-decision from you about scope and spend. P0.4 is a click.
+P0.1's harness is built; what remains is the task list and the API spend to run
+it, both of which are yours. P0.4 is a click.
 
 If only two things remain: **P0.1 and P1.1.** One makes the system measurable;
 the other corrects for what this file cannot see about itself. P0.2 and P0.3
