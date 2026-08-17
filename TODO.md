@@ -15,10 +15,12 @@ Three things drive that judgment:
    harness. There is no measurement of that on real work — not weak evidence,
    none. Demand paging, arguably the centerpiece, still defaults to off because
    nothing has shown it lossless.
-2. **"Built but never wired" has happened three times.** Four inert systems in
-   the first audit; the skill pipeline with zero callers in the second. Each was
-   found by deliberately looking, never by something failing. Three for three is
-   a pattern, and it implies more.
+2. **"Built but never wired" has happened four times.** Four inert systems in
+   the first audit; the skill pipeline with zero callers in the second; and the
+   entire first-run welcome flow, found by the reachability gate the moment it
+   was switched on (P0.3). None was found by something failing — tests pass
+   perfectly well on code nothing calls. The gate now catches this class
+   mechanically, which is why it was worth doing before anything in P2.
 3. **The reviews were self-reviews.** The audits and fixes came from the same
    process. Real bugs were found and tests were verified to fail against broken
    implementations — but this file's own F-caveats name this exact failure mode,
@@ -114,22 +116,33 @@ open and polling**, asserting no dropped `tool_executions` records under real
 load. The unit tests cover a synthetic burst, not a real session. Folded into
 P1.1's soak period rather than blocking.
 
-### P0.3 — Systematic reachability audit
+### P0.3 — Systematic reachability audit ✅ closed, and it paid immediately
 
-Three rounds of "built, tested, never called" is a process failure, not three
-coincidences. Targeted auditing found them; targeted auditing does not scale and
-will miss the next one.
+[`scripts/deadcode.sh`](scripts/deadcode.sh) runs in CI against
+[`.deadcode-baseline`](.deadcode-baseline). It ratchets: the build fails when
+something becomes newly unreachable, not merely because unreachable code exists.
+Verified in both directions — it flags new dead code, and it flags baseline
+entries that have since become reachable so the list tightens rather than rots.
 
-1. Add `golang.org/x/tools/cmd/deadcode` (or equivalent) to CI, reporting
-   functions reachable from no entry point.
-2. Expect noise on a first run. Trim it to a real signal, then **fail the build**
-   on new unreachable exported constructors and services.
-3. Manually audit whatever the tool cannot see — a service constructed and
-   stored on a struct but whose methods are never invoked looks reachable to a
-   call-graph tool. That is exactly the shape of every instance found so far.
+**The first run found a fourth instance of the defect class**, in one command,
+in seconds — where the previous three took seven parallel hand-audits:
 
-This is the single highest-leverage process fix in the file, because it converts
-a recurring class of defect into a build failure.
+| Dead | Size |
+| --- | --- |
+| `internal/welcome` | a complete first-run onboarding flow, never called |
+| `chat/sidebar.go` | an entire chat component, 13 functions |
+| `diff/patch.go` | a public patch-application API with no callers |
+
+72 unreachable functions overall; 49 are design-system and provider-option
+surface and are accepted in the baseline with reasons. The 23 above are recorded
+as debt, **not** accepted — see P1.5 and P3.
+
+Known limitation, unchanged: `deadcode` traces from `main` and from tests, so a
+service that is constructed, stored on a struct, and never invoked still looks
+reachable. That is the shape of the earlier validation and governor findings, so
+this narrows the problem rather than closing it. Manual review still matters,
+and the "constructed but never invoked" pattern deserves its own check
+eventually.
 
 ### P0.4 — Merge PR #1
 
@@ -182,12 +195,25 @@ clear failure message when migration fails, and a documented recovery path.
   directory, not a git repository — each should produce a message that says what
   to do.
 
-### P1.5 — First-run documentation
+### P1.5 — First-run experience: wire up what already exists
 
-README documents commands and keybindings well. Missing: what Aux *is*, what to
-expect on a first session, what it sends to a provider, and where its data
-lives. A new user's first question is "what is this about to do on my machine,"
-and the security posture is a selling point that is currently undocumented.
+**Most of this was already built and never called.** `internal/welcome` has
+`ShouldShow` (detects first boot via a flag file in the data directory),
+`buildIntroBody`, and `MaybeShow` — which creates a welcome session and message
+and is careful to be non-fatal so a failed welcome cannot block startup. Nothing
+in `internal/app` or `cmd` invokes any of it. The reachability gate found it;
+the earlier hand-audits did not.
+
+So this item is smaller than it looked, and split in two:
+
+1. **Wire `welcome.MaybeShow` into startup**, or delete the package. It is a
+   real decision — read the intro body first and check it still describes the
+   product accurately before switching it on, since it predates the security
+   work and the dashboard's current shape.
+2. **Then the genuinely missing documentation**: what Aux *is*, what it sends to
+   a provider, and where its data lives. A new user's first question is "what is
+   this about to do on my machine," and the security posture is a selling point
+   that is currently undocumented.
 
 ### P1.6 — Define supported platforms
 
@@ -309,6 +335,14 @@ Real, small, or low-confidence. Nothing here blocks production.
 - **C4 — correction detection.** "Propose, never auto-write" remains right; the
   heuristics are ~70% unreliable at telling one-shot from durable.
 - **A8 — grep spawns `rg` per call.** Measure before optimizing.
+- **Delete the dead chat sidebar.** `internal/tui/components/chat/sidebar.go` is
+  an entire component (13 functions) superseded by the context pane and never
+  removed. Listed as debt in `.deadcode-baseline`.
+- **Delete or use `diff/patch.go`'s patch API.** `AssembleChanges`, `LoadFiles`,
+  `ProcessPatch`, `ValidatePatch` and friends have no callers; the patch tool
+  takes a different path. Dead code in a file-mutating package is worse than
+  dead code elsewhere, because the next person to touch patching may reasonably
+  assume it is the real implementation.
 - **C1 — four-tier context model.** A principle for reviewing the above, not a
   task: saving tokens means moving Tier 2 → Tier 3, not deleting Tier 2.
 
@@ -318,8 +352,8 @@ Real, small, or low-confidence. Nothing here blocks production.
 
 ```
 P0.2 (sqlite)          ── done
-P0.3 (reachability)    ─┐
-P0.4 (merge PR)        ─┴─→ days of work, independent
+P0.3 (reachability)    ── done
+P0.4 (merge PR)        ──→ ready; body updated
 P0.1 (benchmark)       ────────→ gates everything in P2
                                       │
 P1.1 (external review) ───────────────┤ ← start as soon as PR #1 merges
@@ -330,14 +364,13 @@ P1.2–P1.7              ───────────────┤
                             soak until findings taper
 ```
 
-P0.3 and P0.4 are days of work. P0.1 is the long pole and the only one that
-needs a decision from you about scope and spend — start it first even though it
-finishes last.
+P0.1 is now the only P0 item left that is real work, and the only one needing a
+decision from you about scope and spend. P0.4 is a click.
 
-If only three things remain: **P0.1, P0.3, P1.1.** The first two make the system
-measurable and stop the recurring defect class; the third is the only one that
-corrects for what this file cannot see about itself — as P0.2 demonstrated by
-being wrong.
+If only two things remain: **P0.1 and P1.1.** One makes the system measurable;
+the other corrects for what this file cannot see about itself. P0.2 and P0.3
+both argued for that pairing — P0.2 by being wrong, P0.3 by finding in seconds
+what hand-auditing had missed three times.
 
 ---
 

@@ -47,3 +47,10 @@ jobs:
       # kind of bug local single-run testing misses.
       - name: go test
         run: go test -race ./...
+
+      # This repository has repeatedly shipped subsystems that were complete,
+      # tested, and never called. Tests pass on unreachable code, so no other
+      # step here can catch it. Ratchets against .deadcode-baseline: fails only
+      # on something newly unreachable.
+      - name: reachability
+        run: ./scripts/deadcode.sh
