@@ -56,8 +56,13 @@ func GetHelpText() string {
 		Text, JSON)
 }
 
-// FormatOutput formats the AI response according to the specified format
-func FormatOutput(content string, formatStr string) string {
+// FormatOutput formats the AI response according to the specified format.
+//
+// sessionID is included in JSON output so a scripted caller has a handle on the
+// run it just started — to read its cost from the ledger, or to inspect what it
+// did. Without it the only record of which session a `-p` invocation created is
+// a log line. Text output is unchanged: it is read by people, not parsers.
+func FormatOutput(content, sessionID, formatStr string) string {
 	format, err := Parse(formatStr)
 	if err != nil {
 		// Default to text format on error
@@ -66,7 +71,7 @@ func FormatOutput(content string, formatStr string) string {
 
 	switch format {
 	case JSON:
-		return formatAsJSON(content)
+		return formatAsJSON(content, sessionID)
 	case Text:
 		fallthrough
 	default:
@@ -75,12 +80,14 @@ func FormatOutput(content string, formatStr string) string {
 }
 
 // formatAsJSON wraps the content in a simple JSON object
-func formatAsJSON(content string) string {
+func formatAsJSON(content, sessionID string) string {
 	// Use the JSON package to properly escape the content
 	response := struct {
-		Response string `json:"response"`
+		Response  string `json:"response"`
+		SessionID string `json:"sessionId,omitempty"`
 	}{
-		Response: content,
+		Response:  content,
+		SessionID: sessionID,
 	}
 
 	jsonBytes, err := json.MarshalIndent(response, "", "  ")

@@ -72,6 +72,16 @@ type LSPConfig struct {
 // TUIConfig defines the configuration for the Terminal User Interface.
 type TUIConfig struct {
 	Theme string `json:"theme,omitempty"`
+	// Background pins the light/dark background assumption used to resolve
+	// every AdaptiveColor in the UI (including markdown message text):
+	// "dark", "light", or "auto". Defaults to "dark" because every built-in
+	// theme is dark-first and "auto" depends on a one-shot terminal query
+	// (OSC 11) that is cached for the whole session — if that query is
+	// misread or times out in a given terminal/multiplexer, every message
+	// renders with inverted, unreadable text for the entire run with no way
+	// to recover short of restarting. Set "auto" to opt back into live
+	// detection, or "light" for a light terminal.
+	Background string `json:"background,omitempty"`
 }
 
 // DashboardConfig defines the local read-only web dashboard configuration.
@@ -125,6 +135,28 @@ type Config struct {
 	AutoCompact       bool                              `json:"autoCompact,omitempty"`
 	SemanticRetrieval SemanticRetrievalConfig           `json:"semanticRetrieval,omitempty"`
 	Ponytail          PonytailConfig                    `json:"ponytail,omitempty"`
+	Context           ContextConfig                     `json:"context,omitempty"`
+	CostGovernor      CostGovernorConfig                `json:"costGovernor,omitempty"`
+}
+
+// ContextConfig controls Context OS behaviour (roadmapplan.md §15.1/§15.2). The
+// tool-output virtualization flag supports off/observe/on and defaults to off so
+// behaviour is unchanged until it is proven against a same-model baseline.
+type ContextConfig struct {
+	// Virtualization is one of "off", "observe", or "on".
+	Virtualization string `json:"virtualization,omitempty"`
+	// ArtifactThresholdBytes is the tool-output size above which virtualization
+	// is a candidate. Zero uses the built-in default.
+	ArtifactThresholdBytes int `json:"artifactThresholdBytes,omitempty"`
+	// Paging selects the prompt compiler: "off" (compatibility) or "on" (demand
+	// paging: deduplicate repeated identical content). Default off.
+	Paging string `json:"paging,omitempty"`
+}
+
+// CostGovernorConfig controls the One-Key Cost Governor (roadmapplan.md §9, §15.2).
+type CostGovernorConfig struct {
+	// Mode is "off", "observe" (compute/warn only, no behavior change), or "on".
+	Mode string `json:"mode,omitempty"`
 }
 
 // Application constants
@@ -212,7 +244,9 @@ func Load(workingDir string, debug bool) (*Config, error) {
 		}
 		logging.MessageDir = messagesPath
 
-		sloggingFileWriter, err := os.OpenFile(loggingFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+		// 0600, not 0666: debug logs capture prompts and tool output, which can
+		// contain anything the agent read.
+		sloggingFileWriter, err := os.OpenFile(loggingFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return cfg, fmt.Errorf("failed to open log file: %w", err)
 		}
@@ -263,6 +297,12 @@ func configureViper() {
 	viper.AddConfigPath(fmt.Sprintf("$XDG_CONFIG_HOME/%s", appName))
 	viper.AddConfigPath(fmt.Sprintf("$HOME/.config/%s", appName))
 	viper.SetEnvPrefix(strings.ToUpper(appName))
+	// Nested keys are dotted ("data.directory"), and a dot cannot appear in an
+	// environment variable name. Without this replacer AutomaticEnv silently
+	// covered only single-word top-level keys, so every documented-looking
+	// override — AUX_DATA_DIRECTORY, AUX_DASHBOARD_ENABLED — did nothing at all
+	// and gave no indication of it.
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 }
 
@@ -271,6 +311,7 @@ func setDefaults(debug bool) {
 	viper.SetDefault("data.directory", defaultDataDirectory)
 	viper.SetDefault("contextPaths", defaultContextPaths)
 	viper.SetDefault("tui.theme", "aux")
+	viper.SetDefault("tui.background", "dark")
 	viper.SetDefault("dashboard.enabled", true)
 	viper.SetDefault("dashboard.host", "127.0.0.1")
 	viper.SetDefault("dashboard.port", 0)
@@ -287,6 +328,10 @@ func setDefaults(debug bool) {
 	viper.SetDefault("semanticRetrieval.timeoutSeconds", 15)
 	// Ponytail Protocol is opt-in so users see unopinionated prompts by default.
 	viper.SetDefault("ponytail.enabled", false)
+	viper.SetDefault("context.virtualization", "off")
+	viper.SetDefault("context.artifactThresholdBytes", 0)
+	viper.SetDefault("context.paging", "off")
+	viper.SetDefault("costGovernor.mode", "off")
 
 	// Set default shell from environment or fallback to /bin/bash
 	shellPath := os.Getenv("SHELL")
@@ -954,7 +999,9 @@ func updateCfgFile(updateCfg func(config *Config)) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(configFile, updatedData, 0o644); err != nil {
+	// 0600: this file holds provider API keys in plaintext, so it must not be
+	// readable by other users on the machine.
+	if err := os.WriteFile(configFile, updatedData, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -1076,4 +1123,21 @@ func LoadGitHubToken() (string, error) {
 	}
 
 	return "", fmt.Errorf("GitHub token not found in standard locations")
+}
+
+// SetContextPaging overrides the prompt-compiler selection for this process,
+// so `aux --paging=on` can enable demand paging without editing config files.
+// Only "on" and "off" are accepted: silently ignoring a typo would leave the
+// user believing paging was enabled when it wasn't.
+func SetContextPaging(mode string) error {
+	if cfg == nil {
+		return fmt.Errorf("config not loaded")
+	}
+	switch mode {
+	case "on", "off":
+		cfg.Context.Paging = mode
+		return nil
+	default:
+		return fmt.Errorf("invalid --paging value %q: want \"on\" or \"off\"", mode)
+	}
 }

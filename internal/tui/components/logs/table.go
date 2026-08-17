@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"slices"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
 	"github.com/aux-ai/aux-cli/internal/tui/layout"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type TableComponent interface {

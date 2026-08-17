@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/shared"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/llm/models"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/message"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/shared"
 )
 
 type openaiOptions struct {
@@ -241,7 +241,7 @@ func (o *openaiClient) send(ctx context.Context, messages []message.Message, too
 		return &ProviderResponse{
 			Content:      content,
 			ToolCalls:    toolCalls,
-			Usage:        o.usage(*openaiResponse),
+			Usage:        o.usage(openaiResponse.Usage),
 			FinishReason: finishReason,
 		}, nil
 	}
@@ -274,10 +274,16 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 			currentContent := ""
 			toolCalls := make([]message.ToolCall, 0)
 			var reasoningState reasoningStreamState
+			// Usage is taken from the chunk that carries it rather than from
+			// the accumulator. See streamUsage.
+			var streamed openai.CompletionUsage
 
 			for openaiStream.Next() {
 				chunk := openaiStream.Current()
 				acc.AddChunk(chunk)
+				if chunk.Usage.PromptTokens > 0 {
+					streamed = chunk.Usage
+				}
 
 				for _, choice := range chunk.Choices {
 					if thinking := reasoningDelta(choice.Delta, &reasoningState); thinking != "" {
@@ -312,7 +318,7 @@ func (o *openaiClient) stream(ctx context.Context, messages []message.Message, t
 					Response: &ProviderResponse{
 						Content:      currentContent,
 						ToolCalls:    toolCalls,
-						Usage:        o.usage(acc.ChatCompletion),
+						Usage:        o.usage(streamUsage(streamed, acc.ChatCompletion.Usage)),
 						FinishReason: finishReason,
 					},
 				}
@@ -397,13 +403,35 @@ func (o *openaiClient) toolCalls(completion openai.ChatCompletion) []message.Too
 	return toolCalls
 }
 
-func (o *openaiClient) usage(completion openai.ChatCompletion) TokenUsage {
-	cachedTokens := completion.Usage.PromptTokensDetails.CachedTokens
-	inputTokens := completion.Usage.PromptTokens - cachedTokens
+// streamUsage picks the usage record that actually carries cache details.
+//
+// openai-go v0.1.0-beta.2's streaming accumulator drops
+// prompt_tokens_details: the wire reports cached_tokens for a repeated prefix,
+// and acc.ChatCompletion.Usage reports zero for the same response. Measured
+// against this provider, a request whose prefix was 99.95% cached was recorded
+// as entirely fresh input.
+//
+// That mattered well beyond reporting. Cached input bills at a fraction of the
+// fresh rate, so every cached token was priced as new: session and task costs
+// were overstated, and the cost governor -- which stops the agent when a budget
+// ceiling is reached -- was counting against a number that was too high.
+//
+// The chunk that carries usage is preferred, falling back to the accumulator so
+// a provider that only populates the accumulator still works.
+func streamUsage(fromChunk, fromAccumulator openai.CompletionUsage) openai.CompletionUsage {
+	if fromChunk.PromptTokens > 0 || fromChunk.CompletionTokens > 0 {
+		return fromChunk
+	}
+	return fromAccumulator
+}
+
+func (o *openaiClient) usage(usage openai.CompletionUsage) TokenUsage {
+	cachedTokens := usage.PromptTokensDetails.CachedTokens
+	inputTokens := usage.PromptTokens - cachedTokens
 
 	return TokenUsage{
 		InputTokens:         inputTokens,
-		OutputTokens:        completion.Usage.CompletionTokens,
+		OutputTokens:        usage.CompletionTokens,
 		CacheCreationTokens: 0, // OpenAI doesn't provide this directly
 		CacheReadTokens:     cachedTokens,
 	}

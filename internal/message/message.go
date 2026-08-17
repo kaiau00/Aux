@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/aux-ai/aux-cli/internal/db"
 	"github.com/aux-ai/aux-cli/internal/llm/models"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
+	"github.com/google/uuid"
 )
 
 type CreateMessageParams struct {
@@ -23,6 +23,12 @@ type Service interface {
 	pubsub.Suscriber[Message]
 	Create(ctx context.Context, sessionID string, params CreateMessageParams) (Message, error)
 	Update(ctx context.Context, message Message) error
+	// UpdateStreamed records an in-progress streaming update. Subscribers see it
+	// immediately; the durable write is coalesced (see streamWriter). Use it for
+	// per-token deltas and Update for anything that must be durable at once.
+	UpdateStreamed(ctx context.Context, message Message) error
+	// FlushStreamed forces any coalesced write for a message to land now.
+	FlushStreamed(ctx context.Context, messageID string) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
 	Delete(ctx context.Context, id string) error
@@ -31,14 +37,21 @@ type Service interface {
 
 type service struct {
 	*pubsub.Broker[Message]
-	q db.Querier
+	q      db.Querier
+	stream *streamWriter
 }
 
 func NewService(q db.Querier) Service {
-	return &service{
+	return newService(q, DefaultFlushWindow)
+}
+
+func newService(q db.Querier, window time.Duration) *service {
+	s := &service{
 		Broker: pubsub.NewBroker[Message](),
 		q:      q,
 	}
+	s.stream = newStreamWriter(window, s.persist)
+	return s
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {
@@ -98,7 +111,41 @@ func (s *service) DeleteSessionMessages(ctx context.Context, sessionID string) e
 	return nil
 }
 
+// Update writes a message durably and publishes it.
+//
+// It also supersedes any coalesced streaming write still pending for the same
+// message. Both happen under the stream writer's lock so the two can never
+// interleave: without that, a delta buffered up to a flush window ago could land
+// after this write and revert the message — losing, for example, the finish
+// marker that tells the UI a turn is over.
 func (s *service) Update(ctx context.Context, message Message) error {
+	s.stream.mu.Lock()
+	defer s.stream.mu.Unlock()
+	s.stream.discardLocked(message.ID)
+	return s.persist(ctx, message)
+}
+
+// UpdateStreamed publishes immediately and defers the durable write.
+//
+// Publishing is not deferred: subscribers (the TUI) render token-by-token as
+// before, so coalescing is invisible on screen and only removes redundant disk
+// writes.
+func (s *service) UpdateStreamed(ctx context.Context, message Message) error {
+	message.UpdatedAt = time.Now().Unix()
+	s.Publish(pubsub.UpdatedEvent, message)
+	s.stream.schedule(message)
+	return nil
+}
+
+// FlushStreamed forces a pending coalesced write to land. Callers that end a
+// stream with Update do not need it, since Update supersedes the pending write.
+func (s *service) FlushStreamed(_ context.Context, messageID string) error {
+	return s.stream.flush(messageID)
+}
+
+// persist performs the actual write and publish. It assumes any coordination
+// with the stream writer has already happened.
+func (s *service) persist(ctx context.Context, message Message) error {
 	parts, err := marshallParts(message.Parts)
 	if err != nil {
 		return err

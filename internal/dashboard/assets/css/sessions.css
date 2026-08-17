@@ -1,0 +1,67 @@
+/* Session/log inspector, page-specific layout only (roadmapplan.md §13.13).
+   This is the secondary, debugging-oriented view — the default route is the
+   task-first workspace (tasks.html); shared chrome lives in base.css. */
+main.dashboard {
+  padding: var(--space-4);
+  display: grid;
+  grid-template-columns: minmax(270px, 320px) 1fr minmax(300px, 380px);
+  grid-template-rows: auto 1fr;
+  gap: var(--space-4);
+  overflow: hidden;
+}
+@media (max-width: 1000px) {
+  main.dashboard { grid-template-columns: 1fr; grid-template-rows: auto; overflow: auto; }
+}
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,.04);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.panel h2 {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--amber-2);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+
+.stats { grid-column: 1 / 4; display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
+@media (max-width: 1000px) { .stats { grid-column: auto; grid-template-columns: repeat(2, 1fr); } }
+.stat {
+  border: 1px solid var(--line); border-radius: 10px; padding: var(--space-5);
+  background: linear-gradient(145deg, rgba(40, 29, 12, .8), rgba(10, 8, 4, .72));
+}
+.stat .label { color: var(--muted); font-size: var(--text-xs); text-transform: uppercase; }
+.stat .value { font-size: 1.9rem; color: var(--amber-2); margin-top: var(--space-2); font-variant-numeric: tabular-nums; }
+
+.tree, .feed, .inspector, .activity { overflow: auto; height: calc(100% - 42px); padding: var(--space-3); }
+.node, .event, .detail {
+  border: 1px solid rgba(245, 158, 11, .2);
+  background: rgba(8, 7, 4, .48);
+  border-radius: 8px;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.node { cursor: pointer; }
+.node.active { border-color: var(--line-strong); box-shadow: inset 3px 0 0 var(--amber); }
+.node.child { margin-left: var(--space-4); }
+.title { color: var(--text); font-weight: 650; overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: var(--text-sm); margin-top: .25rem; }
+.event-type { color: var(--amber-2); font-size: var(--text-xs); text-transform: uppercase; }
+.event-text { margin-top: .35rem; overflow-wrap: anywhere; }
+
+/* Live Activity: real connection/event state, not a decorative graphic
+   (roadmapplan.md §13.12 — remove or repurpose Live Core with real state). */
+.activity-row { display: flex; justify-content: space-between; gap: var(--space-2); padding: .3rem 0; border-bottom: 1px solid var(--line); }
+.activity-row:last-child { border-bottom: none; }
+.activity-row .k { color: var(--muted); font-size: var(--text-sm); }
+.activity-row .v { color: var(--text); font-variant-numeric: tabular-nums; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .4rem; background: var(--muted); }
+.dot.connected { background: var(--ok); }
+.dot.reconnecting { background: var(--danger); }

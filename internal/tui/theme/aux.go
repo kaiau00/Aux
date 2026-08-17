@@ -41,7 +41,7 @@ func NewAuxTheme() *AuxTheme {
 	lightRed := "#c2410c"
 	lightOrange := "#b45309"
 	lightGreen := "#a16207"
-	lightCyan := "#ca8a04"
+	lightCyan := "#bb8004" // darkened from #ca8a04 for WCAG contrast against the light background (§13.18)
 	lightYellow := "#713f12"
 	lightBorder := "#e4b765"
 

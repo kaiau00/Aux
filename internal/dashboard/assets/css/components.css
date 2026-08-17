@@ -1,0 +1,41 @@
+/* Reusable UI primitives shared across dashboard pages (roadmapplan.md
+   §13.13): cards, key/value rows, badges, and semantic state colors. Kept
+   separate from base.css (layout chrome) and each page's own stylesheet
+   (page-specific layout). */
+.empty { color: var(--muted); font-style: italic; }
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--space-4) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--panel);
+}
+.card h2 { margin: 0 0 var(--space-2); font-size: var(--text-base); color: var(--amber-2); }
+
+.kv { display: flex; flex-wrap: wrap; gap: .35rem var(--space-5); color: var(--muted); font-size: var(--text-sm); }
+.kv b { color: var(--text); font-weight: 600; }
+
+.row { display: flex; gap: var(--space-2); align-items: center; padding: .15rem 0; }
+.badge { font-size: var(--text-xs); padding: .05rem .45rem; border-radius: 999px; border: 1px solid var(--line); }
+
+/* Distinct semantic states — success reserved for validated evidence only. */
+.state-validated, .state-completed { color: var(--ok); border-color: var(--ok); }
+.state-active { color: var(--amber-2); border-color: var(--amber-2); }
+.state-failed, .state-blocked { color: var(--danger); border-color: var(--danger); }
+.state-unverified, .state-waiting, .state-queued, .state-stale { color: var(--muted); }
+
+.op-add { color: var(--ok); }
+.op-delete { color: var(--danger); }
+.op-modify, .op-rename { color: var(--text); }
+
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--amber); }
+
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #ffe9b0;
+  margin: var(--space-2) 0 0;
+  font: var(--text-sm)/1.45 var(--font-mono);
+}

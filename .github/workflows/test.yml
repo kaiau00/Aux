@@ -1,0 +1,63 @@
+name: test
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - run: go mod download
+
+      # gofmt exits 0 even when it lists unformatted files, so the listing
+      # itself has to be turned into the failure signal.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race is the point of running these in CI: the TUI and agent packages
+      # share state across goroutines, and a data race there is exactly the
+      # kind of bug local single-run testing misses.
+      - name: go test
+        # The golden snapshots record the Unicode rendering, and icon selection
+        # is decided at package init from the ambient locale, so it cannot be
+        # set from within a test. Pinning it here keeps the snapshots comparing
+        # UI changes rather than the runner's locale — a runner image changing
+        # LANG should not read as a visual regression.
+        env:
+          AUX_UNICODE_ICONS: "1"
+        run: go test -race ./...
+
+      # This repository has repeatedly shipped subsystems that were complete,
+      # tested, and never called. Tests pass on unreachable code, so no other
+      # step here can catch it. Ratchets against .deadcode-baseline: fails only
+      # on something newly unreachable.
+      - name: reachability
+        run: ./scripts/deadcode.sh

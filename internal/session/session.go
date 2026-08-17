@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/google/uuid"
 	"github.com/aux-ai/aux-cli/internal/db"
 	"github.com/aux-ai/aux-cli/internal/pubsub"
+	"github.com/google/uuid"
 )
 
 type Session struct {

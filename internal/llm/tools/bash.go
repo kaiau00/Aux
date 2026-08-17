@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/llm/tools/shell"
 	"github.com/aux-ai/aux-cli/internal/permission"
 )
@@ -270,13 +269,17 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		p := b.permissions.Request(
 			permission.CreatePermissionRequest{
 				SessionID:   sessionID,
-				Path:        config.WorkingDirectory(),
+				Path:        ResolveWorkingDir(ctx),
 				ToolName:    BashToolName,
 				Action:      "execute",
 				Description: fmt.Sprintf("Execute command: %s", params.Command),
 				Params: BashPermissionsParams{
 					Command: params.Command,
 				},
+				// Path is the working directory for every command, so without
+				// the command itself in the key, approving one command for the
+				// session would authorize every later command in that session.
+				Fingerprint: params.Command,
 			},
 		)
 		if !p {
@@ -284,7 +287,7 @@ func (b *bashTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 		}
 	}
 	startTime := time.Now()
-	shell := shell.GetPersistentShell(config.WorkingDirectory())
+	shell := shell.GetPersistentShell(ResolveWorkingDir(ctx))
 	stdout, stderr, exitCode, interrupted, err := shell.Exec(ctx, params.Command, params.Timeout)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error executing command: %w", err)

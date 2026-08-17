@@ -1,0 +1,23 @@
+/* Active-task workspace, page-specific layout only (roadmapplan.md
+   §13.12/§13.14). Shared chrome lives in base.css, reusable primitives
+   (card/badge/state/kv/row/bar) in components.css. */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 1px;
+  background: var(--line);
+}
+@media (max-width: 900px) { .workspace { grid-template-columns: minmax(200px, 260px) 1fr; } }
+@media (max-width: 720px) { .workspace { grid-template-columns: 1fr; } }
+
+.task-list, .task-detail { background: var(--panel-2); padding: var(--space-4); overflow-y: auto; }
+
+.task-row {
+  display: flex; flex-direction: column; gap: .15rem;
+  padding: .55rem .65rem; border: 1px solid transparent; border-radius: 8px;
+  cursor: pointer;
+}
+.task-row:hover { border-color: var(--line); background: var(--panel); }
+.task-row.selected { border-color: var(--line-strong); background: var(--panel); }
+.task-row .objective { color: var(--text); }
+.task-row .meta { color: var(--muted); font-size: var(--text-sm); }

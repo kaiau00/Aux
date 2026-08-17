@@ -1,0 +1,32 @@
+{
+  "name": "aux-benchmark",
+  "tasks": [
+    {
+      "id": "example-add-test",
+      "description": "Template. Replace these with real tasks before trusting any number this produces.",
+      "repo": "/absolute/path/to/a/scratch/checkout",
+      "baseRevision": "0000000000000000000000000000000000000000",
+      "prompt": "Add a test covering the error path of Foo.Bar, and make it pass.",
+      "setup": [],
+      "success": [
+        "go test ./..."
+      ],
+      "corrected": false
+    },
+    {
+      "id": "example-previously-corrected",
+      "description": "The most valuable kind of task: one where you had to correct the agent by hand. Mark these `corrected: true`.",
+      "repo": "/absolute/path/to/another/scratch/checkout",
+      "baseRevision": "0000000000000000000000000000000000000000",
+      "prompt": "Migrate the auth middleware to the new API, keeping behaviour identical.",
+      "setup": [
+        "npm ci"
+      ],
+      "success": [
+        "npm test",
+        "npm run lint"
+      ],
+      "corrected": true
+    }
+  ]
+}

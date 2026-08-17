@@ -1,10 +1,10 @@
 package layout
 
 import (
+	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/aux-ai/aux-cli/internal/tui/theme"
 )
 
 type SplitPaneLayout interface {
@@ -26,9 +26,35 @@ type splitPaneLayout struct {
 	ratio         float64
 	verticalRatio float64
 
+	// collapseRightBelow collapses the right panel into a single-column layout
+	// when the total width is below this threshold (roadmapplan.md §13.10 narrow
+	// TUI). Zero disables collapsing.
+	collapseRightBelow int
+	rightCollapsed     bool
+
 	rightPanel  Container
 	leftPanel   Container
 	bottomPanel Container
+}
+
+// splitWidths computes the left/right panel widths. When both panels are present
+// but the total width is below collapseBelow, the right panel collapses to zero
+// and the left panel takes the full width (single-column narrow layout).
+func splitWidths(width int, ratio float64, hasLeft, hasRight bool, collapseBelow int) (left, right int) {
+	switch {
+	case hasLeft && hasRight:
+		if collapseBelow > 0 && width < collapseBelow {
+			return width, 0
+		}
+		left = int(float64(width) * ratio)
+		return left, width - left
+	case hasLeft:
+		return width, 0
+	case hasRight:
+		return 0, width
+	default:
+		return 0, 0
+	}
 }
 
 type SplitPaneOption func(*splitPaneLayout)
@@ -88,7 +114,7 @@ func (s *splitPaneLayout) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (s *splitPaneLayout) View() string {
 	var topSection string
 
-	if s.leftPanel != nil && s.rightPanel != nil {
+	if s.leftPanel != nil && s.rightPanel != nil && !s.rightCollapsed {
 		leftView := s.leftPanel.View()
 		rightView := s.rightPanel.View()
 		topSection = lipgloss.JoinHorizontal(lipgloss.Top, leftView, rightView)
@@ -138,17 +164,8 @@ func (s *splitPaneLayout) SetSize(width, height int) tea.Cmd {
 		bottomHeight = 0
 	}
 
-	var leftWidth, rightWidth int
-	if s.leftPanel != nil && s.rightPanel != nil {
-		leftWidth = int(float64(width) * s.ratio)
-		rightWidth = width - leftWidth
-	} else if s.leftPanel != nil {
-		leftWidth = width
-		rightWidth = 0
-	} else if s.rightPanel != nil {
-		leftWidth = 0
-		rightWidth = width
-	}
+	leftWidth, rightWidth := splitWidths(width, s.ratio, s.leftPanel != nil, s.rightPanel != nil, s.collapseRightBelow)
+	s.rightCollapsed = s.leftPanel != nil && s.rightPanel != nil && rightWidth == 0
 
 	var cmds []tea.Cmd
 	if s.leftPanel != nil {
@@ -279,5 +296,13 @@ func WithBottomPanel(panel Container) SplitPaneOption {
 func WithVerticalRatio(ratio float64) SplitPaneOption {
 	return func(s *splitPaneLayout) {
 		s.verticalRatio = ratio
+	}
+}
+
+// WithCollapseRightBelow collapses the right panel into a single-column layout
+// when the terminal width falls below threshold (roadmapplan.md §13.10).
+func WithCollapseRightBelow(threshold int) SplitPaneOption {
+	return func(s *splitPaneLayout) {
+		s.collapseRightBelow = threshold
 	}
 }

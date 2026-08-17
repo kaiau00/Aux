@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/message"
+	"github.com/google/uuid"
 	"google.golang.org/genai"
 )
 

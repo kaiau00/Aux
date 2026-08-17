@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"sync"
 
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
@@ -137,7 +139,10 @@ func NewMcpTool(name string, tool mcp.Tool, permissions permission.Service, mcpC
 	}
 }
 
-var mcpTools []tools.BaseTool
+var (
+	mcpTools   []tools.BaseTool
+	mcpToolsMu sync.Mutex
+)
 
 func getTools(ctx context.Context, name string, m config.MCPServer, permissions permission.Service, c MCPClient) []tools.BaseTool {
 	var stdioTools []tools.BaseTool
@@ -159,18 +164,52 @@ func getTools(ctx context.Context, name string, m config.MCPServer, permissions 
 		logging.Error("error listing tools", "error", err)
 		return stdioTools
 	}
-	for _, t := range tools.Tools {
+	// Sort by tool name so a server that returns its tools in a different order
+	// between runs cannot shift the prompt prefix. See serverNames below for why
+	// tool ordering is load-bearing rather than cosmetic.
+	sorted := make([]mcp.Tool, len(tools.Tools))
+	copy(sorted, tools.Tools)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	for _, t := range sorted {
 		stdioTools = append(stdioTools, NewMcpTool(name, t, permissions, m))
 	}
 	defer c.Close()
 	return stdioTools
 }
 
+// serverNames returns the MCP server names in sorted order.
+//
+// Ranging over the server map directly would inherit Go's randomized map
+// iteration, so with two or more MCP servers the tool array — and therefore the
+// serialized tool block at the head of every prompt — would differ between
+// process starts. Providers key their prompt cache on an exact prefix match, so
+// that randomization silently cost a cold cache on every restart while
+// StablePrefixID (which sorted before hashing) reported the prefix as unchanged.
+//
+// Kept as a pure function over the map so the ordering guarantee is testable
+// without loading global config.
+func serverNames(servers map[string]config.MCPServer) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func GetMcpTools(ctx context.Context, permissions permission.Service) []tools.BaseTool {
+	mcpToolsMu.Lock()
+	defer mcpToolsMu.Unlock()
 	if len(mcpTools) > 0 {
 		return mcpTools
 	}
-	for name, m := range config.Get().MCPServers {
+	cfg := config.Get()
+	if cfg == nil {
+		return nil
+	}
+	servers := cfg.MCPServers
+	for _, name := range serverNames(servers) {
+		m := servers[name]
 		switch m.Type {
 		case config.MCPStdio:
 			c, err := client.NewStdioMCPClient(

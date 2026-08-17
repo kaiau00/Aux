@@ -1,13 +1,13 @@
 package dialog
 
 import (
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/tui/layout"
 	"github.com/aux-ai/aux-cli/internal/tui/styles"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ThemeChangedMsg is sent when the theme is changed
@@ -195,4 +195,3 @@ func NewThemeDialogCmp() ThemeDialog {
 		currentTheme: "",
 	}
 }
-

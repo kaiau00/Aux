@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/diff"
 	"github.com/aux-ai/aux-cli/internal/history"
 	"github.com/aux-ai/aux-cli/internal/logging"
@@ -101,7 +100,7 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	for _, filePath := range filesToRead {
 		absPath := filePath
 		if !filepath.IsAbs(absPath) {
-			wd := config.WorkingDirectory()
+			wd := ResolveWorkingDir(ctx)
 			absPath = filepath.Join(wd, absPath)
 		}
 
@@ -136,7 +135,7 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	for _, filePath := range filesToAdd {
 		absPath := filePath
 		if !filepath.IsAbs(absPath) {
-			wd := config.WorkingDirectory()
+			wd := ResolveWorkingDir(ctx)
 			absPath = filepath.Join(wd, absPath)
 		}
 
@@ -153,7 +152,7 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	for _, filePath := range filesToRead {
 		absPath := filePath
 		if !filepath.IsAbs(absPath) {
-			wd := config.WorkingDirectory()
+			wd := ResolveWorkingDir(ctx)
 			absPath = filepath.Join(wd, absPath)
 		}
 
@@ -261,7 +260,7 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	err = diff.ApplyCommit(commit, func(path string, content string) error {
 		absPath := path
 		if !filepath.IsAbs(absPath) {
-			wd := config.WorkingDirectory()
+			wd := ResolveWorkingDir(ctx)
 			absPath = filepath.Join(wd, absPath)
 		}
 
@@ -275,7 +274,7 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	}, func(path string) error {
 		absPath := path
 		if !filepath.IsAbs(absPath) {
-			wd := config.WorkingDirectory()
+			wd := ResolveWorkingDir(ctx)
 			absPath = filepath.Join(wd, absPath)
 		}
 		return os.Remove(absPath)
@@ -292,7 +291,7 @@ func (p *patchTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error
 	for path, change := range commit.Changes {
 		absPath := path
 		if !filepath.IsAbs(absPath) {
-			wd := config.WorkingDirectory()
+			wd := ResolveWorkingDir(ctx)
 			absPath = filepath.Join(wd, absPath)
 		}
 		changedFiles = append(changedFiles, absPath)

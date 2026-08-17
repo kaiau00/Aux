@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/fileutil"
 	"github.com/aux-ai/aux-cli/internal/logging"
+	"github.com/aux-ai/aux-cli/internal/permission"
 )
 
 const (
@@ -63,10 +64,12 @@ type GlobResponseMetadata struct {
 	Truncated     bool `json:"truncated"`
 }
 
-type globTool struct{}
+type globTool struct{ permissions permission.Service }
 
-func NewGlobTool() BaseTool {
-	return &globTool{}
+// NewGlobTool builds the glob tool. permissions gates matches resolved outside
+// the working directory; passing nil makes such reads fail closed.
+func NewGlobTool(permissions permission.Service) BaseTool {
+	return &globTool{permissions: permissions}
 }
 
 func (g *globTool) Info() ToolInfo {
@@ -99,10 +102,14 @@ func (g *globTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 
 	searchPath := params.Path
 	if searchPath == "" {
-		searchPath = config.WorkingDirectory()
+		searchPath = ResolveWorkingDir(ctx)
 	}
 
-	files, truncated, err := globFiles(params.Pattern, searchPath, 100)
+	if err := RequireReadAccess(ctx, g.permissions, GlobToolName, searchPath); err != nil {
+		return ToolResponse{}, err
+	}
+
+	files, truncated, err := globFiles(ctx, params.Pattern, searchPath, 100)
 	if err != nil {
 		return ToolResponse{}, fmt.Errorf("error finding files: %w", err)
 	}
@@ -126,8 +133,14 @@ func (g *globTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	), nil
 }
 
-func globFiles(pattern, searchPath string, limit int) ([]string, bool, error) {
-	cmdRg := fileutil.GetRgCmd(pattern)
+func globFiles(ctx context.Context, pattern, searchPath string, limit int) ([]string, bool, error) {
+	// Bound the rg run independently of ctx's own deadline: an unexpectedly
+	// large or slow (e.g. cloud-sync-backed) directory tree must not be able
+	// to hang the tool call indefinitely.
+	rgCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmdRg := fileutil.GetRgCmd(rgCtx, pattern)
 	if cmdRg != nil {
 		cmdRg.Dir = searchPath
 		matches, err := runRipgrep(cmdRg, searchPath, limit)

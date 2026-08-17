@@ -1,0 +1,42 @@
+/* Shared page-specific layout for the read-only project views (Project
+   Brain, Memory, Impact, Optimization) — a single scrollable column of
+   cards. Reusable primitives (card/badge/state/kv/row) live in
+   components.css. */
+main.brain {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+.list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: .4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.list-row:last-child { border-bottom: none; }
+.list-row .primary { color: var(--text); }
+.list-row .secondary { color: var(--muted); font-size: var(--text-sm); }
+
+.section-title { color: var(--amber-2); font-size: var(--text-sm); text-transform: uppercase; margin: var(--space-4) 0 var(--space-2); }
+.section-title:first-child { margin-top: 0; }
+
+.manifest {
+  background: rgba(8, 7, 4, .48);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  font: var(--text-sm)/1.5 var(--font-mono);
+  color: #ffe9b0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.graph-svg { width: 100%; height: auto; }
+.graph-svg circle.node { fill: var(--panel-2); stroke: var(--line-strong); }
+.graph-svg text.node-label { fill: var(--muted); font-size: 9px; }
+.graph-svg line.edge { stroke: var(--line); stroke-width: 1; }

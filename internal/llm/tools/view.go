@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aux-ai/aux-cli/internal/config"
 	llmcontext "github.com/aux-ai/aux-cli/internal/llm/context"
 	"github.com/aux-ai/aux-cli/internal/logging"
 	"github.com/aux-ai/aux-cli/internal/lsp"
+	"github.com/aux-ai/aux-cli/internal/permission"
 )
 
 type ViewParams struct {
@@ -23,7 +23,8 @@ type ViewParams struct {
 }
 
 type viewTool struct {
-	lspClients map[string]*lsp.Client
+	lspClients  map[string]*lsp.Client
+	permissions permission.Service
 }
 
 type ViewResponseMetadata struct {
@@ -74,9 +75,12 @@ TIPS:
 - When viewing large files, use the offset parameter to read specific sections`
 )
 
-func NewViewTool(lspClients map[string]*lsp.Client) BaseTool {
+// NewViewTool builds the view tool. permissions gates reads outside the working
+// directory; passing nil makes such reads fail closed.
+func NewViewTool(lspClients map[string]*lsp.Client, permissions permission.Service) BaseTool {
 	return &viewTool{
-		lspClients,
+		lspClients:  lspClients,
+		permissions: permissions,
 	}
 }
 
@@ -117,7 +121,11 @@ func (v *viewTool) Run(ctx context.Context, call ToolCall) (ToolResponse, error)
 	// Handle relative paths
 	filePath := params.FilePath
 	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(config.WorkingDirectory(), filePath)
+		filePath = filepath.Join(ResolveWorkingDir(ctx), filePath)
+	}
+
+	if err := RequireReadAccess(ctx, v.permissions, ViewToolName, filePath); err != nil {
+		return ToolResponse{}, err
 	}
 
 	// Check if file exists

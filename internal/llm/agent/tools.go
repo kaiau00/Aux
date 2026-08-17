@@ -4,48 +4,60 @@ import (
 	"context"
 
 	"github.com/aux-ai/aux-cli/internal/history"
+	"github.com/aux-ai/aux-cli/internal/hooks"
+	"github.com/aux-ai/aux-cli/internal/impact"
 	"github.com/aux-ai/aux-cli/internal/llm/tools"
 	"github.com/aux-ai/aux-cli/internal/lsp"
-	"github.com/aux-ai/aux-cli/internal/message"
 	"github.com/aux-ai/aux-cli/internal/permission"
-	"github.com/aux-ai/aux-cli/internal/session"
 )
 
 func CoderAgentTools(
+	deps Deps,
 	permissions permission.Service,
-	sessions session.Service,
-	messages message.Service,
 	history history.Service,
 	lspClients map[string]*lsp.Client,
+	hookRegistry *hooks.Registry,
+	impactSvc *impact.Service,
 ) []tools.BaseTool {
 	ctx := context.Background()
 	otherTools := GetMcpTools(ctx, permissions)
 	if len(lspClients) > 0 {
 		otherTools = append(otherTools, tools.NewDiagnosticsTool(lspClients))
 	}
-	return append(
-		[]tools.BaseTool{
-			tools.NewBashTool(permissions),
-			tools.NewEditTool(lspClients, permissions, history),
-			tools.NewFetchTool(permissions),
-			tools.NewGlobTool(),
-			tools.NewGrepTool(),
-			tools.NewLsTool(),
-			tools.NewSourcegraphTool(),
-			tools.NewViewTool(lspClients),
-			tools.NewPatchTool(lspClients, permissions, history),
-			tools.NewWriteTool(lspClients, permissions, history),
-			NewAgentTool(sessions, messages, lspClients),
-		}, otherTools...,
-	)
+	base := []tools.BaseTool{
+		tools.NewBashTool(permissions),
+		tools.NewEditTool(lspClients, permissions, history),
+		tools.NewFetchTool(permissions),
+		tools.NewGlobTool(permissions),
+		tools.NewGrepTool(permissions),
+		tools.NewLsTool(permissions),
+		tools.NewSourcegraphTool(),
+		tools.NewViewTool(lspClients, permissions),
+		tools.NewPatchTool(lspClients, permissions, history),
+		tools.NewWriteTool(lspClients, permissions, history),
+		NewAgentTool(deps, hookRegistry, permissions, impactSvc, lspClients),
+	}
+	// Per-page exclusion is only useful if the party generating the context can
+	// reach it, so the tool is offered whenever there is a page store to write
+	// to and history to resolve paths against.
+	if deps.Pages != nil && deps.Messages != nil {
+		base = append(base, tools.NewContextExcludeTool(
+			deps.Pages,
+			newReadHistory(deps.Messages, tools.ResolveWorkingDir(ctx)),
+		))
+	}
+	return append(base, otherTools...)
 }
 
-func TaskAgentTools(lspClients map[string]*lsp.Client) []tools.BaseTool {
+// TaskAgentTools is the read-only tool set given to subagents. permissions is
+// required for the same reason the coder agent needs it: a subagent reading
+// outside its working directory must prompt rather than silently succeed.
+func TaskAgentTools(lspClients map[string]*lsp.Client, permissions permission.Service) []tools.BaseTool {
 	return []tools.BaseTool{
-		tools.NewGlobTool(),
-		tools.NewGrepTool(),
-		tools.NewLsTool(),
+		tools.NewGlobTool(permissions),
+		tools.NewGrepTool(permissions),
+		tools.NewLsTool(permissions),
 		tools.NewSourcegraphTool(),
-		tools.NewViewTool(lspClients),
+		tools.NewViewTool(lspClients, permissions),
 	}
 }

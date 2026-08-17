@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -10,14 +11,17 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/logging"
+	"github.com/aux-ai/aux-cli/internal/viewmodel"
 )
 
-//go:embed assets/*
+//go:embed all:assets
 var assets embed.FS
 
 type Server struct {
@@ -70,8 +74,22 @@ func Start(parent context.Context, services Services, options Options) (*Server,
 	server.url = fmt.Sprintf("http://%s/?token=%s", listener.Addr().String(), token)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", server.handleIndex)
+	mux.HandleFunc("GET /tasks", server.handleTasksPage)
+	mux.HandleFunc("GET /sessions", server.handleSessionsPage)
+	mux.HandleFunc("GET /css/", server.handleStaticAsset)
+	mux.HandleFunc("GET /js/", server.handleStaticAsset)
 	mux.HandleFunc("/api/snapshot", server.handleSnapshot)
 	mux.HandleFunc("/api/sessions/", server.handleSessionMessages)
+	mux.HandleFunc("GET /api/v1/tasks", server.handleTasksList)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", server.handleTaskView)
+	mux.HandleFunc("GET /project", server.handleProjectPage)
+	mux.HandleFunc("GET /memory", server.handleMemoryPage)
+	mux.HandleFunc("GET /impact", server.handleImpactPage)
+	mux.HandleFunc("GET /optimization", server.handleOptimizationPage)
+	mux.HandleFunc("GET /api/v1/project", server.handleProjectView)
+	mux.HandleFunc("GET /api/v1/memory", server.handleMemoryView)
+	mux.HandleFunc("GET /api/v1/impact", server.handleImpactView)
+	mux.HandleFunc("GET /api/v1/optimization", server.handleOptimizationView)
 	mux.HandleFunc("/events", server.handleEvents)
 	server.httpServer = &http.Server{
 		Handler:           mux,
@@ -113,22 +131,231 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return err
 }
 
+// handleIndex serves the default route. It is the same task-first workspace
+// as /tasks (roadmapplan.md §13.12: the browser prioritizes the active task
+// over lifetime telemetry) rather than the old session/log inspector, which
+// moved to /sessions.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
+	s.serveHTMLAsset(w, r, "tasks.html")
+}
+
+// handleTasksPage serves the active-task workspace (roadmapplan.md §13.12), an
+// active-work-first view backed entirely by the read-only /api/v1 projections.
+// Token-gated like the rest of the dashboard.
+func (s *Server) handleTasksPage(w http.ResponseWriter, r *http.Request) {
+	s.serveHTMLAsset(w, r, "tasks.html")
+}
+
+// handleSessionsPage serves the session/log inspector: the secondary,
+// debugging-oriented view (formerly the default route). Token-gated like the
+// rest of the dashboard.
+func (s *Server) handleSessionsPage(w http.ResponseWriter, r *http.Request) {
+	s.serveHTMLAsset(w, r, "sessions.html")
+}
+
+// handleProjectPage serves the Project Brain view (roadmapplan.md §13.14 item 4).
+func (s *Server) handleProjectPage(w http.ResponseWriter, r *http.Request) {
+	s.serveHTMLAsset(w, r, "project.html")
+}
+
+// handleMemoryPage serves the Memory & skills view (roadmapplan.md §13.14 item 5).
+func (s *Server) handleMemoryPage(w http.ResponseWriter, r *http.Request) {
+	s.serveHTMLAsset(w, r, "memory.html")
+}
+
+// handleImpactPage serves the Impact graph view (roadmapplan.md §13.14 item 6).
+func (s *Server) handleImpactPage(w http.ResponseWriter, r *http.Request) {
+	s.serveHTMLAsset(w, r, "impact.html")
+}
+
+// handleOptimizationPage serves the Optimization view (roadmapplan.md §13.14 item 7).
+func (s *Server) handleOptimizationPage(w http.ResponseWriter, r *http.Request) {
+	s.serveHTMLAsset(w, r, "optimization.html")
+}
+
+// serveHTMLAsset serves one embedded top-level HTML page by name, after the
+// same token check every dashboard page requires.
+func (s *Server) serveHTMLAsset(w http.ResponseWriter, r *http.Request, name string) {
 	if !s.authorized(r) {
 		http.Error(w, "dashboard token required", http.StatusUnauthorized)
 		return
 	}
-	data, err := assets.ReadFile("assets/index.html")
+	data, err := assets.ReadFile("assets/" + name)
 	if err != nil {
 		http.Error(w, "dashboard asset missing", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+// handleStaticAsset serves the split css/js sub-resources (roadmapplan.md
+// §13.13) from the embedded asset tree. These carry no sensitive data — the
+// token protects the /api data endpoints — so they are not token-gated, since a
+// browser cannot attach the token to <link>/<script> sub-resource requests.
+func (s *Server) handleStaticAsset(w http.ResponseWriter, r *http.Request) {
+	clean := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	// Only css/ and js/ trees are served, and Clean removes any traversal.
+	if !strings.HasPrefix(clean, "css/") && !strings.HasPrefix(clean, "js/") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := assets.ReadFile("assets/" + clean)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	switch {
+	case strings.HasSuffix(clean, ".css"):
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(clean, ".js"):
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	}
+	_, _ = w.Write(data)
+}
+
+// handleTasksList serves recent task summaries for the dashboard's active-work
+// navigation (roadmapplan.md §13.12, §18). Read-only and token-gated.
+func (s *Server) handleTasksList(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Tasks == nil {
+		http.Error(w, "task read models unavailable", http.StatusNotFound)
+		return
+	}
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	tasks, err := s.services.Tasks.RecentTasks(r.Context(), limit)
+	if err != nil {
+		http.Error(w, "failed to list tasks", http.StatusInternalServerError)
+		return
+	}
+	if tasks == nil {
+		tasks = []viewmodel.TaskSummaryVM{}
+	}
+	writeJSON(w, tasks)
+}
+
+// handleTaskView serves a task's assembled, read-only view model (roadmapplan.md
+// §5.6, §18). It is read-only and token-gated like the rest of the dashboard.
+func (s *Server) handleTaskView(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Tasks == nil {
+		http.Error(w, "task read models unavailable", http.StatusNotFound)
+		return
+	}
+	id := r.PathValue("id")
+	view, err := s.services.Tasks.TaskView(r.Context(), id)
+	if err != nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(view)
+}
+
+// handleProjectView serves the current project's Project Brain view
+// (roadmapplan.md §13.14 item 4). Read-only and token-gated.
+func (s *Server) handleProjectView(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Project == nil {
+		http.Error(w, "project read model unavailable", http.StatusNotFound)
+		return
+	}
+	view, err := s.services.Project.ProjectBrainView(r.Context(), s.services.Workdir)
+	if err != nil {
+		http.Error(w, "failed to resolve project", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, view)
+}
+
+// handleMemoryView serves the current project's Memory & skills view
+// (roadmapplan.md §13.14 item 5). Read-only and token-gated.
+func (s *Server) handleMemoryView(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Memory == nil || s.services.Project == nil {
+		http.Error(w, "memory read model unavailable", http.StatusNotFound)
+		return
+	}
+	projectID, err := s.services.Project.ResolveProjectID(r.Context(), s.services.Workdir)
+	if err != nil {
+		http.Error(w, "failed to resolve project", http.StatusInternalServerError)
+		return
+	}
+	view, err := s.services.Memory.MemoryBrainView(r.Context(), projectID)
+	if err != nil {
+		http.Error(w, "failed to load memory", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, view)
+}
+
+// handleImpactView serves the current project's Impact graph view
+// (roadmapplan.md §13.14 item 6). Read-only and token-gated.
+func (s *Server) handleImpactView(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Impact == nil || s.services.Project == nil {
+		http.Error(w, "impact read model unavailable", http.StatusNotFound)
+		return
+	}
+	projectID, err := s.services.Project.ResolveProjectID(r.Context(), s.services.Workdir)
+	if err != nil {
+		http.Error(w, "failed to resolve project", http.StatusInternalServerError)
+		return
+	}
+	view, err := s.services.Impact.ImpactGraphView(r.Context(), projectID)
+	if err != nil {
+		http.Error(w, "failed to load impact graph", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, view)
+}
+
+// handleOptimizationView serves the current project's Optimization view
+// (roadmapplan.md §13.14 item 7). Read-only and token-gated.
+func (s *Server) handleOptimizationView(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "dashboard token required", http.StatusUnauthorized)
+		return
+	}
+	if s.services.Optimization == nil || s.services.Project == nil {
+		http.Error(w, "optimization read model unavailable", http.StatusNotFound)
+		return
+	}
+	projectID, err := s.services.Project.ResolveProjectID(r.Context(), s.services.Workdir)
+	if err != nil {
+		http.Error(w, "failed to resolve project", http.StatusInternalServerError)
+		return
+	}
+	view, err := s.services.Optimization.OptimizationView(r.Context(), projectID)
+	if err != nil {
+		http.Error(w, "failed to load optimization history", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, view)
 }
 
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +455,10 @@ func (s *Server) authorized(r *http.Request) bool {
 	if token == "" {
 		token = r.Header.Get("X-Aux-Dashboard-Token")
 	}
-	return token != "" && token == s.token
+	// Constant-time compare: this is the dashboard's only authentication
+	// boundary, and == returns as soon as two bytes differ, which leaks how
+	// much of a guessed token was correct.
+	return token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
 }
 
 func (s *Server) snapshot(ctx context.Context) (Snapshot, error) {

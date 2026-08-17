@@ -1,8 +1,8 @@
 package styles
 
 import (
-	"github.com/charmbracelet/lipgloss"
 	"github.com/aux-ai/aux-cli/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (

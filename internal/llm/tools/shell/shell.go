@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aux-ai/aux-cli/internal/config"
 )
@@ -61,23 +63,23 @@ func GetPersistentShell(workingDir string) *PersistentShell {
 func newPersistentShell(cwd string) *PersistentShell {
 	// Get shell configuration from config
 	cfg := config.Get()
-	
+
 	// Default to environment variable if config is not set or nil
 	var shellPath string
 	var shellArgs []string
-	
+
 	if cfg != nil {
 		shellPath = cfg.Shell.Path
 		shellArgs = cfg.Shell.Args
 	}
-	
+
 	if shellPath == "" {
 		shellPath = os.Getenv("SHELL")
 		if shellPath == "" {
 			shellPath = "/bin/bash"
 		}
 	}
-	
+
 	// Default shell args
 	if len(shellArgs) == 0 {
 		shellArgs = []string{"-l"}
@@ -305,12 +307,77 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+// MaxCaptureBytes bounds how much of a command's stdout/stderr is read into
+// memory.
+//
+// Commands write their output to a temp file, which is then read back whole.
+// Unbounded, `cat huge.log` or a runaway loop pulls the entire file into the
+// agent's address space before any downstream truncation gets a chance to
+// discard it — the process can die on output it was always going to throw away.
+//
+// The cap is far above the ~30KB the tool layer ultimately sends to the model,
+// so it changes nothing for realistic output and only engages where the old
+// behaviour was a liability.
+const MaxCaptureBytes = 256 * 1024
+
+// readFileOrEmpty reads a file, keeping at most MaxCaptureBytes: the head and
+// tail of oversized output, with a marker naming what was dropped. Head and tail
+// are kept because the useful parts of command output live at the ends — the
+// command echo and early errors at the start, the summary and exit context at
+// the end.
 func readFileOrEmpty(path string) string {
-	content, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
-	return string(content)
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+
+	size := info.Size()
+	if size <= MaxCaptureBytes {
+		content, err := io.ReadAll(f)
+		if err != nil {
+			return ""
+		}
+		return string(content)
+	}
+
+	half := MaxCaptureBytes / 2
+	head := make([]byte, half)
+	if _, err := io.ReadFull(f, head); err != nil {
+		return ""
+	}
+	tail := make([]byte, half)
+	if _, err := f.ReadAt(tail, size-int64(half)); err != nil {
+		return ""
+	}
+
+	dropped := size - int64(MaxCaptureBytes)
+	return fmt.Sprintf(
+		"%s\n\n... [%d bytes of output dropped; the command produced %d bytes total] ...\n\n%s",
+		trimPartialRuneSuffix(head), dropped, size, trimPartialRunePrefix(tail),
+	)
+}
+
+// trimPartialRuneSuffix drops a multi-byte rune left incomplete by cutting at a
+// fixed byte offset, so the result is always valid UTF-8.
+func trimPartialRuneSuffix(b []byte) string {
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
+}
+
+// trimPartialRunePrefix is trimPartialRuneSuffix for a cut at the front.
+func trimPartialRunePrefix(b []byte) string {
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[1:]
+	}
+	return string(b)
 }
 
 func fileExists(path string) bool {

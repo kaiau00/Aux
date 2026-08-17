@@ -1,0 +1,111 @@
+# Reachability baseline — see scripts/deadcode.sh
+#
+# Every entry here is code that nothing calls, including tests. The build fails
+# when something NEW joins this list, not when the list is non-empty. Removing
+# an entry (by wiring the code up or deleting it) is always safe and is the
+# point of the exercise.
+#
+# Entries are `path/to/file.go: FunctionName`, without line numbers, so ordinary
+# edits do not churn the baseline.
+
+# ---------------------------------------------------------------------------
+# KNOWN DEAD — a decision is owed on each of these. Tracked in TODO.md.
+#
+# These are NOT accepted. They are whole features and components that were
+# built, tested, and never wired: exactly the defect class this gate exists to
+# catch. They are listed only so the gate can be switched on today rather than
+# blocked behind deleting or wiring them. Do not add anything here to make a
+# build pass.
+#
+# - internal/welcome: a complete first-run onboarding flow. TODO.md P1.5 records
+#   "no first-run documentation" as an open item; it turns out most of it was
+#   already written and simply never called from app startup.
+# - sidebar.go: an entire chat sidebar component, superseded by the context pane
+#   but never removed.
+# - diff/patch.go: a public patch-application API with no callers; the patch
+#   tool uses a different path.
+# ---------------------------------------------------------------------------
+
+internal/diff/patch.go: AssembleChanges
+internal/diff/patch.go: LoadFiles
+internal/diff/patch.go: OpenFile
+internal/diff/patch.go: ProcessPatch
+internal/diff/patch.go: RemoveFile
+internal/diff/patch.go: ValidatePatch
+internal/diff/patch.go: WriteFile
+internal/tui/components/chat/sidebar.go: NewSidebarCmp
+internal/tui/components/chat/sidebar.go: getDisplayPath
+internal/tui/components/chat/sidebar.go: sidebarCmp.GetSize
+internal/tui/components/chat/sidebar.go: sidebarCmp.Init
+internal/tui/components/chat/sidebar.go: sidebarCmp.SetSize
+internal/tui/components/chat/sidebar.go: sidebarCmp.Update
+internal/tui/components/chat/sidebar.go: sidebarCmp.View
+internal/tui/components/chat/sidebar.go: sidebarCmp.findInitialVersion
+internal/tui/components/chat/sidebar.go: sidebarCmp.loadModifiedFiles
+internal/tui/components/chat/sidebar.go: sidebarCmp.modifiedFile
+internal/tui/components/chat/sidebar.go: sidebarCmp.modifiedFiles
+internal/tui/components/chat/sidebar.go: sidebarCmp.processFileChanges
+internal/tui/components/chat/sidebar.go: sidebarCmp.sessionSection
+internal/welcome/welcome.go: MaybeShow
+internal/welcome/welcome.go: ShouldShow
+internal/welcome/welcome.go: buildIntroBody
+
+# ---------------------------------------------------------------------------
+# ACCEPTED — deliberately unreachable, no action needed.
+#
+# Design-system and library surface: themed colour accessors, border and padding
+# variants, layout ratio options, and provider configuration options. These are
+# the vocabulary of an internal API, and a design system whose every variant is
+# in use is one that is about to need a new variant. Cheap to keep, and their
+# absence would push callers toward hardcoded values.
+# ---------------------------------------------------------------------------
+
+internal/diff/diff.go: WithContextSize
+internal/diff/diff.go: lipglossToHex
+internal/llm/provider/copilot.go: WithCopilotBearerToken
+internal/llm/provider/copilot.go: WithCopilotExtraHeaders
+internal/llm/provider/copilot.go: WithCopilotReasoningEffort
+internal/llm/provider/gemini.go: WithGeminiDisableCache
+internal/llm/provider/gemini.go: geminiClient.toolCalls
+internal/llm/provider/openai.go: WithOpenAIDisableCache
+internal/llm/provider/openai.go: reasoningFromMessage
+internal/llm/provider/provider.go: WithBedrockOptions
+internal/llm/provider/provider.go: WithCopilotOptions
+internal/llm/provider/provider.go: WithGeminiOptions
+internal/llm/tools/shell/shell.go: PersistentShell.Close
+internal/logging/logger.go: DebugPersist
+internal/tui/components/chat/list.go: formatTimeDifference
+internal/tui/components/core/status.go: statusCmp.availableFooterMsgWidth
+internal/tui/layout/container.go: WithBorderHorizontal
+internal/tui/layout/container.go: WithBorderStyle
+internal/tui/layout/container.go: WithBorderVertical
+internal/tui/layout/container.go: WithDoubleBorder
+internal/tui/layout/container.go: WithPaddingAll
+internal/tui/layout/container.go: WithPaddingHorizontal
+internal/tui/layout/container.go: WithPaddingVertical
+internal/tui/layout/container.go: WithRoundedBorder
+internal/tui/layout/container.go: WithThickBorder
+internal/tui/layout/split.go: WithRatio
+internal/tui/layout/split.go: WithVerticalRatio
+internal/tui/styles/styles.go: AccentColor
+internal/tui/styles/styles.go: BackgroundColor
+internal/tui/styles/styles.go: BackgroundDarkerColor
+internal/tui/styles/styles.go: BackgroundSecondaryColor
+internal/tui/styles/styles.go: Border
+internal/tui/styles/styles.go: BorderDimColor
+internal/tui/styles/styles.go: BorderFocusedColor
+internal/tui/styles/styles.go: BorderNormalColor
+internal/tui/styles/styles.go: DimBorder
+internal/tui/styles/styles.go: DoubleBorder
+internal/tui/styles/styles.go: ErrorColor
+internal/tui/styles/styles.go: FocusedBorder
+internal/tui/styles/styles.go: InfoColor
+internal/tui/styles/styles.go: PrimaryColor
+internal/tui/styles/styles.go: SecondaryColor
+internal/tui/styles/styles.go: SuccessColor
+internal/tui/styles/styles.go: TextColor
+internal/tui/styles/styles.go: TextEmphasizedColor
+internal/tui/styles/styles.go: TextMutedColor
+internal/tui/styles/styles.go: ThickBorder
+internal/tui/styles/styles.go: WarningColor
+internal/tui/tui.go: appModel.findCommand

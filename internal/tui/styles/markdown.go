@@ -1,10 +1,10 @@
 package styles
 
 import (
+	"github.com/aux-ai/aux-cli/internal/tui/theme"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/aux-ai/aux-cli/internal/tui/theme"
 )
 
 const defaultMargin = 1
@@ -14,11 +14,20 @@ func boolPtr(b bool) *bool       { return &b }
 func stringPtr(s string) *string { return &s }
 func uintPtr(u uint) *uint       { return &u }
 
-// returns a glamour TermRenderer configured with the current theme
+// returns a glamour TermRenderer configured with the current theme.
+//
+// glamour.NewTermRenderer defaults to termenv.TrueColor unconditionally and
+// never consults the terminal's actual capability — it has no auto-detection
+// of its own. On a terminal with incomplete or no 24-bit support (notably
+// Apple's Terminal.app), that mismatch can make every rendered message's text
+// color drop or misrender, independent of anything else in the app. Passing
+// the same profile lipgloss already detected/pinned keeps glamour's output
+// consistent with the rest of the UI instead of silently assuming TrueColor.
 func GetMarkdownRenderer(width int) *glamour.TermRenderer {
 	r, _ := glamour.NewTermRenderer(
 		glamour.WithStyles(generateMarkdownStyleConfig()),
 		glamour.WithWordWrap(width),
+		glamour.WithColorProfile(lipgloss.ColorProfile()),
 	)
 	return r
 }
@@ -130,7 +139,7 @@ func generateMarkdownStyleConfig() ansi.StyleConfig {
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{},
-			Ticked:         "[✓] ",
+			Ticked:         "[" + CheckIcon + "] ",
 			Unticked:       "[ ] ",
 		},
 		Link: ansi.StylePrimitive{

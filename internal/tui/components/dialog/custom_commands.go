@@ -7,9 +7,9 @@ import (
 	"regexp"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/aux-ai/aux-cli/internal/config"
 	"github.com/aux-ai/aux-cli/internal/tui/util"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Command prefix constants
