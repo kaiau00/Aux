@@ -144,3 +144,61 @@ func TestRunnerErrorIsFailed(t *testing.T) {
 		t.Fatalf("runner error should mark run failed")
 	}
 }
+
+// The invariant this package exists to hold: a criterion that has failed
+// validation must never read as validated.
+//
+// deriveState resolves failing evidence ahead of passing evidence, so the
+// failing run's evidence is what blocks the criterion. Until this was fixed,
+// attachEvidence discarded the error from InsertEvidence -- so if that write
+// failed while an earlier run had passed, the criterion had passing evidence,
+// no failing evidence, and proof-of-done reported Validated. A failed
+// validation presented as a successful one.
+func TestFailAfterPassBlocksTheCriterion(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	intent := validation.Intent{ID: "i1", ValidatorType: "go.test", Command: "go test ./...", CriterionIDs: []string{"c1"}}
+
+	// First run passes on one input.
+	if _, err := svc.RunIntent(ctx, "task1", intent, "fp-1", &fakeRunner{exit: 0}); err != nil {
+		t.Fatalf("passing run: %v", err)
+	}
+	if states, _ := svc.ProofOfDone(ctx, "task1", []string{"c1"}); states["c1"] != validation.Validated {
+		t.Fatalf("after a pass the criterion should be validated, got %q", states["c1"])
+	}
+
+	// The code then changes and the same command fails. A different fingerprint
+	// so the cached pass cannot be reused.
+	if _, err := svc.RunIntent(ctx, "task1", intent, "fp-2", &fakeRunner{exit: 1}); err != nil {
+		t.Fatalf("failing run: %v", err)
+	}
+
+	states, err := svc.ProofOfDone(ctx, "task1", []string{"c1"})
+	if err != nil {
+		t.Fatalf("ProofOfDone: %v", err)
+	}
+	if states["c1"] != validation.Blocked {
+		t.Fatalf("a later failure must block the criterion, got %q — an earlier pass must not survive it", states["c1"])
+	}
+}
+
+// Recording evidence is not best-effort. If it cannot be written, the
+// validation cannot be claimed to have happened, so the call must fail rather
+// than return a Result the caller would treat as proof.
+func TestUnrecordableEvidenceFailsTheRun(t *testing.T) {
+	ctx := context.Background()
+	conn := dbtest.New(t)
+	svc := validation.NewService(validation.NewStore(conn), eventstore.NewService(conn))
+
+	// Dropping the evidence table makes InsertEvidence fail while the run itself
+	// still records — exactly the partial failure this guards against.
+	if _, err := conn.ExecContext(ctx, "DROP TABLE validation_evidence"); err != nil {
+		t.Skipf("cannot simulate an evidence write failure: %v", err)
+	}
+
+	intent := validation.Intent{ID: "i1", ValidatorType: "go.test", Command: "go test ./...", CriterionIDs: []string{"c1"}}
+	if _, err := svc.RunIntent(ctx, "task1", intent, "fp-1", &fakeRunner{exit: 1}); err == nil {
+		t.Fatal("a run whose evidence could not be recorded must return an error, not a Result")
+	}
+}

@@ -2,6 +2,7 @@ package validation
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/aux-ai/aux-cli/internal/eventstore"
@@ -48,7 +49,9 @@ func (s *Service) RunIntent(ctx context.Context, taskID string, intent Intent, i
 	if cached, ok, err := s.store.CachedPass(ctx, cmdHash, inputFingerprint); err != nil {
 		return Result{}, err
 	} else if ok {
-		s.attachEvidence(ctx, taskID, intent, cached.ID, "cached pass: "+intent.Command)
+		if eerr := s.attachEvidence(ctx, taskID, intent, cached.ID, "cached pass: "+intent.Command); eerr != nil {
+			return Result{}, eerr
+		}
 		return Result{Run: cached, Cached: true}, nil
 	}
 
@@ -80,17 +83,34 @@ func (s *Service) RunIntent(ctx context.Context, taskID string, intent Intent, i
 
 	// Both outcomes are evidence: a pass validates the criterion, a fail blocks
 	// it. The agent cannot silently mark a criterion validated without this.
-	s.attachEvidence(ctx, taskID, intent, run.ID, string(run.Status)+": "+intent.Command)
+	if eerr := s.attachEvidence(ctx, taskID, intent, run.ID, string(run.Status)+": "+intent.Command); eerr != nil {
+		return Result{}, eerr
+	}
 	return Result{Run: run}, err
 }
 
-func (s *Service) attachEvidence(ctx context.Context, taskID string, intent Intent, runID, summary string) {
+// attachEvidence records executable evidence for each of the intent's criteria.
+//
+// The error is returned rather than discarded, and callers must fail on it.
+// deriveState resolves failing evidence ahead of passing evidence, so a failing
+// run's evidence is the thing that blocks a criterion. If that write is dropped
+// while an earlier run passed, the criterion has passing evidence and no
+// failing evidence, and proof-of-done reports it Validated — a failed
+// validation presented as a successful one, which is the single invariant this
+// package exists to hold.
+//
+// Failing closed is therefore correct: if the evidence cannot be recorded, the
+// validation cannot be claimed to have happened.
+func (s *Service) attachEvidence(ctx context.Context, taskID string, intent Intent, runID, summary string) error {
 	for _, cid := range intent.CriterionIDs {
-		_ = s.store.InsertEvidence(ctx, Evidence{
+		if err := s.store.InsertEvidence(ctx, Evidence{
 			TaskID: taskID, CriterionID: cid, ValidationRunID: runID,
 			EvidenceType: EvidenceExecutable, Summary: summary, CreatedAt: time.Now().UnixMilli(),
-		})
+		}); err != nil {
+			return fmt.Errorf("failed to record validation evidence for criterion %s: %w", cid, err)
+		}
 	}
+	return nil
 }
 
 // WaiveCriterion records a user waiver for a criterion (only the user can waive).
