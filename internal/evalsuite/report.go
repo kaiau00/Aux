@@ -77,3 +77,40 @@ func RenderVerdict(v Verdict) string {
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
+
+// RenderSeries formats a series with its spread, so the noise is visible beside
+// the numbers rather than hidden behind an average.
+func RenderSeries(st SeriesStats) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s", st.Label)
+	if st.Harness != "" {
+		fmt.Fprintf(&b, " [%s]", st.Harness)
+	}
+	fmt.Fprintf(&b, "  (%d runs)\n", st.Runs)
+	fmt.Fprintf(&b, "  %-8s median %10.0f   range %.0f-%.0f   spread %.0f%%\n",
+		"tokens", st.Tokens.Median, st.Tokens.Min, st.Tokens.Max, st.Tokens.Spread()*100)
+	fmt.Fprintf(&b, "  %-8s median %10.0f   range %.0f-%.0f\n",
+		"turns", st.Turns.Median, st.Turns.Min, st.Turns.Max)
+	fmt.Fprintf(&b, "  %-8s median %9.0f%%   range %.0f%%-%.0f%%\n",
+		"passed", st.SuccessRate.Median*100, st.SuccessRate.Min*100, st.SuccessRate.Max*100)
+	return b.String()
+}
+
+// RenderSeriesComparison leads with the verdict, because the verdict is
+// frequently "inconclusive" and that must not be something a reader has to
+// derive from the table themselves.
+func RenderSeriesComparison(c SeriesComparison) string {
+	var b strings.Builder
+	b.WriteString(RenderSeries(c.A))
+	b.WriteString("\n")
+	b.WriteString(RenderSeries(c.B))
+	b.WriteString("\n")
+	if c.Conclusive {
+		b.WriteString("CONCLUSIVE\n  ")
+	} else {
+		b.WriteString("NOT CONCLUSIVE\n  ")
+	}
+	b.WriteString(c.Verdict)
+	b.WriteString("\n")
+	return b.String()
+}

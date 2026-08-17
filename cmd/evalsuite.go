@@ -79,23 +79,49 @@ To gate a change, record a baseline, make the change, run again, and compare:
 		binary, _ := cmd.Flags().GetString("binary")
 		label, _ := cmd.Flags().GetString("label")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
+		which, _ := cmd.Flags().GetString("harness")
+		model, _ := cmd.Flags().GetString("model")
+		repeat, _ := cmd.Flags().GetInt("repeat")
 
-		runner := evalsuite.NewRunner(
-			evalsuite.ShellExecutor{Timeout: timeout},
-			ledgerMetrics{ledger: cost.NewService(conn)},
-			binary,
-		)
+		var h evalsuite.Harness
+		switch which {
+		case "aux":
+			if binary == "" {
+				binary = "aux"
+			}
+			h = evalsuite.AuxHarness{Binary: binary, Metrics_: ledgerMetrics{ledger: cost.NewService(conn)}}
+		case "opencode":
+			if binary == "" {
+				binary = "opencode"
+			}
+			h = evalsuite.OpenCodeHarness{Binary: binary, Model: model}
+		default:
+			return fmt.Errorf("unknown harness %q (want aux or opencode)", which)
+		}
 
-		fmt.Printf("Running %s: %d task(s). This spends API budget.\n\n", suite.Name, len(suite.Tasks))
-		result, err := runner.RunSuite(cmd.Context(), suite, label)
+		if repeat < 2 {
+			fmt.Println("Note: fewer than 2 runs cannot show a noise floor, and single-run" +
+				"\ncomparisons of an agent are not reproducible. Use --repeat 3 or more" +
+				"\nbefore drawing any conclusion from these numbers.\n")
+		}
+
+		runner := evalsuite.NewRunner(evalsuite.ShellExecutor{Timeout: timeout}, h)
+
+		fmt.Printf("Running %s with %s: %d task(s) x %d run(s).\n\n",
+			suite.Name, h.Name(), len(suite.Tasks), max(repeat, 1))
+		series, err := runner.RunSeries(cmd.Context(), suite, label, repeat)
 		if err != nil {
 			return err
 		}
 
-		fmt.Print(evalsuite.RenderRun(result))
+		for _, r := range series.Runs {
+			fmt.Print(evalsuite.RenderRun(r))
+			fmt.Println()
+		}
+		fmt.Print(evalsuite.RenderSeries(series.Stats()))
 
 		if path, _ := cmd.Flags().GetString("save"); path != "" {
-			if err := result.Save(path); err != nil {
+			if err := series.Save(path); err != nil {
 				return err
 			}
 			fmt.Printf("\nSaved to %s\n", path)
@@ -146,9 +172,37 @@ Exits non-zero when the gate fails, so it can be used in CI.`,
 	},
 }
 
+var evalCompareCmd = &cobra.Command{
+	Use:   "compare <a.json> <b.json>",
+	Short: "Compare two series against the noise each actually exhibits",
+	Long: `Compare two saved series.
+
+A difference smaller than the run-to-run noise floor is reported as
+inconclusive rather than as a result. On this repository two runs of an
+identical configuration differed by 49% in tokens, so an unqualified percentage
+taken from single runs is a coin flip wearing a number.`,
+	Args:         cobra.ExactArgs(2),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		a, err := evalsuite.LoadSeries(args[0])
+		if err != nil {
+			return err
+		}
+		b, err := evalsuite.LoadSeries(args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Print(evalsuite.RenderSeriesComparison(evalsuite.CompareSeries(a, b)))
+		return nil
+	},
+}
+
 func init() {
 	evalSuiteCmd.Flags().Bool("validate", false, "Check the suite without running anything")
-	evalSuiteCmd.Flags().String("binary", "aux", "Command used to invoke the agent")
+	evalSuiteCmd.Flags().String("harness", "aux", "Which agent CLI to measure (aux, opencode)")
+	evalSuiteCmd.Flags().String("binary", "", "Path to the agent binary (defaults to the harness name)")
+	evalSuiteCmd.Flags().String("model", "", "Force a model, so a harness comparison does not become a model comparison")
+	evalSuiteCmd.Flags().Int("repeat", 1, "Runs per configuration; 3+ is needed for any conclusion")
 	evalSuiteCmd.Flags().String("label", "", "Label recorded with the run (e.g. \"paging-on\")")
 	evalSuiteCmd.Flags().String("save", "", "Write the run to this path for later comparison")
 	evalSuiteCmd.Flags().Duration("timeout", 10*time.Minute, "Per-command timeout")
@@ -158,4 +212,5 @@ func init() {
 
 	evalCmd.AddCommand(evalSuiteCmd)
 	evalCmd.AddCommand(evalGateCmd)
+	evalCmd.AddCommand(evalCompareCmd)
 }

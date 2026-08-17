@@ -49,11 +49,9 @@ func (e ShellExecutor) Run(ctx context.Context, dir, command string) (string, er
 
 // Runner executes a suite.
 type Runner struct {
-	Exec    Executor
-	Metrics MetricsReader
-
-	// AuxBinary is the command used to invoke the agent non-interactively.
-	AuxBinary string
+	Exec Executor
+	// Harness is the agent CLI under measurement.
+	Harness Harness
 
 	// Isolate, when set, resets each repository to the task's base revision
 	// before running. Defaults on: without it, task N runs against the mess
@@ -65,8 +63,8 @@ type Runner struct {
 }
 
 // NewRunner returns a runner with isolation enabled.
-func NewRunner(exec Executor, metrics MetricsReader, auxBinary string) *Runner {
-	return &Runner{Exec: exec, Metrics: metrics, AuxBinary: auxBinary, Isolate: true}
+func NewRunner(exec Executor, h Harness) *Runner {
+	return &Runner{Exec: exec, Harness: h, Isolate: true}
 }
 
 // RunSuite executes every task and returns the measured result.
@@ -78,11 +76,15 @@ func (r *Runner) RunSuite(ctx context.Context, s Suite, label string) (SuiteRun,
 	if err := s.Validate(); err != nil {
 		return SuiteRun{}, err
 	}
-	if r.Exec == nil {
-		return SuiteRun{}, fmt.Errorf("runner has no executor")
+	if r.Exec == nil || r.Harness == nil {
+		return SuiteRun{}, fmt.Errorf("runner needs both an executor and a harness")
 	}
 
-	out := SuiteRun{Suite: s.Name, Label: label, RanAt: time.Now()}
+	name := ""
+	if r.Harness != nil {
+		name = r.Harness.Name()
+	}
+	out := SuiteRun{Suite: s.Name, Label: label, Harness: name, RanAt: time.Now()}
 	for _, t := range s.Tasks {
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -123,23 +125,15 @@ func (r *Runner) runTask(ctx context.Context, t Task) Run {
 	// the success commands decide. A hard failure is still recorded, because it
 	// explains an otherwise mysterious red.
 	//
-	// JSON output is requested for the session id, which is the handle used to
-	// read what the run cost from the ledger.
-	agentCmd := fmt.Sprintf("%s -p %s --quiet --output-format json", r.AuxBinary, shellQuote(t.Prompt))
-	agentOut, agentErr := r.Exec.Run(ctx, t.Repo, agentCmd)
+	agentOut, agentErr := r.Exec.Run(ctx, t.Repo, r.Harness.Command(t.Prompt))
 
-	sessionID, idErr := sessionIDFrom(agentOut)
-	if r.Metrics != nil {
-		if idErr != nil {
-			// Unmeasured cost must be visible, not silently zero: a run with no
-			// metrics would otherwise look like the cheapest in the suite.
-			run.CostUnknown = true
-		} else if in, outTok, turns, cost, unknown, err := r.Metrics.TaskMetrics(ctx, sessionID); err == nil {
-			run.InputTokens, run.OutputTokens, run.Turns = in, outTok, turns
-			run.Cost, run.CostUnknown = cost, unknown
-		} else {
-			run.CostUnknown = true
-		}
+	if usage, err := r.Harness.Metrics(ctx, agentOut); err == nil {
+		run.InputTokens, run.OutputTokens, run.Turns = usage.InputTokens, usage.OutputTokens, usage.Turns
+		run.Cost, run.CostUnknown = usage.Cost, usage.CostUnknown
+	} else {
+		// Unmeasured cost must be visible, not silently zero: a run with no
+		// metrics would otherwise look like the cheapest in the suite.
+		run.CostUnknown = true
 	}
 
 	for _, cmd := range t.Success {
@@ -188,4 +182,27 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "... [truncated]"
+}
+
+// RunSeries executes the suite repeat times under one configuration.
+//
+// Repetition is not optional rigour here; it is the only way any number from
+// this suite means anything. See Series.
+func (r *Runner) RunSeries(ctx context.Context, s Suite, label string, repeat int) (Series, error) {
+	if repeat < 1 {
+		repeat = 1
+	}
+	name := ""
+	if r.Harness != nil {
+		name = r.Harness.Name()
+	}
+	series := Series{Label: label, Harness: name}
+	for i := 0; i < repeat; i++ {
+		run, err := r.RunSuite(ctx, s, fmt.Sprintf("%s#%d", label, i+1))
+		if err != nil {
+			return series, err
+		}
+		series.Runs = append(series.Runs, run)
+	}
+	return series, nil
 }

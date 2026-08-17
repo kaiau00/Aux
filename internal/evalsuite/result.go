@@ -35,10 +35,11 @@ func (r Run) TotalTokens() int64 { return r.InputTokens + r.OutputTokens }
 
 // SuiteRun is one execution of a whole suite.
 type SuiteRun struct {
-	Suite string    `json:"suite"`
-	Label string    `json:"label,omitempty"`
-	RanAt time.Time `json:"ranAt"`
-	Runs  []Run     `json:"runs"`
+	Suite   string    `json:"suite"`
+	Label   string    `json:"label,omitempty"`
+	Harness string    `json:"harness,omitempty"`
+	RanAt   time.Time `json:"ranAt"`
+	Runs    []Run     `json:"runs"`
 }
 
 // Summary is the aggregate a gate compares.

@@ -59,6 +59,12 @@ func (m *fakeMetrics) TaskMetrics(_ context.Context, sessionID string) (int64, i
 	return m.in, m.out, m.turns, m.cost, false, nil
 }
 
+// auxRunner builds a runner wired to the Aux harness, which is what most of
+// these tests exercise.
+func auxRunner(exec Executor, metrics MetricsReader) *Runner {
+	return NewRunner(exec, AuxHarness{Binary: "aux", Metrics_: metrics})
+}
+
 func testTask() Task {
 	return Task{
 		ID:           "t1",
@@ -79,7 +85,7 @@ func testSuite(tasks ...Task) Suite {
 func TestRunnerRecordsSuccessAndMetrics(t *testing.T) {
 	exec := &fakeExec{}
 	metrics := &fakeMetrics{in: 500, out: 200, turns: 4, cost: 0.05}
-	r := NewRunner(exec, metrics, "aux")
+	r := auxRunner(exec, metrics)
 
 	got, err := r.RunSuite(t.Context(), testSuite(), "baseline")
 	if err != nil {
@@ -99,7 +105,7 @@ func TestRunnerRecordsSuccessAndMetrics(t *testing.T) {
 // Isolation is what stops task N from measuring the mess task N-1 left.
 func TestRunnerResetsRepoToBaseRevision(t *testing.T) {
 	exec := &fakeExec{}
-	r := NewRunner(exec, nil, "aux")
+	r := auxRunner(exec, nil)
 
 	if _, err := r.RunSuite(t.Context(), testSuite(), ""); err != nil {
 		t.Fatalf("RunSuite: %v", err)
@@ -116,7 +122,7 @@ func TestRunnerResetsRepoToBaseRevision(t *testing.T) {
 // non-zero having done the work.
 func TestAgentExitStatusDoesNotDecideSuccess(t *testing.T) {
 	exec := &fakeExec{failAgent: true}
-	r := NewRunner(exec, nil, "aux")
+	r := auxRunner(exec, nil)
 
 	got, err := r.RunSuite(t.Context(), testSuite(), "")
 	if err != nil {
@@ -130,7 +136,7 @@ func TestAgentExitStatusDoesNotDecideSuccess(t *testing.T) {
 // ...and the converse: a clean agent exit having done nothing must fail.
 func TestFailingSuccessCommandFailsTheTask(t *testing.T) {
 	exec := &fakeExec{failOn: "go test"}
-	r := NewRunner(exec, nil, "aux")
+	r := auxRunner(exec, nil)
 
 	got, err := r.RunSuite(t.Context(), testSuite(), "")
 	if err != nil {
@@ -148,7 +154,7 @@ func TestSetupFailureIsReportedDistinctly(t *testing.T) {
 	task := testTask()
 	task.Setup = []string{"npm ci"}
 	exec := &fakeExec{failOn: "npm ci"}
-	r := NewRunner(exec, nil, "aux")
+	r := auxRunner(exec, nil)
 
 	got, _ := r.RunSuite(t.Context(), testSuite(task), "")
 	if got.Runs[0].Succeeded {
@@ -169,7 +175,7 @@ func TestOneFailingTaskDoesNotAbortTheSuite(t *testing.T) {
 	b.Success = []string{"this-one-fails"}
 
 	exec := &fakeExec{failOn: "this-one-fails"}
-	r := NewRunner(exec, nil, "aux")
+	r := auxRunner(exec, nil)
 
 	got, err := r.RunSuite(t.Context(), testSuite(a, b, c), "")
 	if err != nil {
@@ -186,7 +192,7 @@ func TestOneFailingTaskDoesNotAbortTheSuite(t *testing.T) {
 // A run whose cost could not be read must not look like the cheapest in the
 // suite.
 func TestUnreadableMetricsMarkCostUnknown(t *testing.T) {
-	r := NewRunner(&fakeExec{}, &fakeMetrics{err: errors.New("no ledger")}, "aux")
+	r := auxRunner(&fakeExec{}, &fakeMetrics{err: errors.New("no ledger")})
 
 	got, _ := r.RunSuite(t.Context(), testSuite(), "")
 	if !got.Runs[0].CostUnknown {
@@ -199,7 +205,7 @@ func TestUnreadableMetricsMarkCostUnknown(t *testing.T) {
 
 func TestMissingSessionIDMarksCostUnknown(t *testing.T) {
 	exec := &fakeExec{agentOut: "plain text, no json"}
-	r := NewRunner(exec, &fakeMetrics{in: 100}, "aux")
+	r := auxRunner(exec, &fakeMetrics{in: 100})
 
 	got, _ := r.RunSuite(t.Context(), testSuite(), "")
 	if !got.Runs[0].CostUnknown {
@@ -237,7 +243,7 @@ func TestPromptsWithQuotesSurviveShellQuoting(t *testing.T) {
 	task.Prompt = `fix the "off by one" in Bob's loop; don't touch $HOME`
 
 	exec := &fakeExec{}
-	r := NewRunner(exec, nil, "aux")
+	r := auxRunner(exec, nil)
 	if _, err := r.RunSuite(t.Context(), testSuite(task), ""); err != nil {
 		t.Fatalf("RunSuite: %v", err)
 	}
@@ -261,7 +267,7 @@ func TestPromptsWithQuotesSurviveShellQuoting(t *testing.T) {
 }
 
 func TestRunnerRejectsAnInvalidSuite(t *testing.T) {
-	r := NewRunner(&fakeExec{}, nil, "aux")
+	r := auxRunner(&fakeExec{}, nil)
 	bad := Suite{Name: "bad", Tasks: []Task{{ID: "x"}}}
 
 	if _, err := r.RunSuite(t.Context(), bad, ""); err == nil {
