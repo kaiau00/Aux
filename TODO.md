@@ -180,16 +180,37 @@ Priority order for outside eyes:
 3. **One real user on a real repository for a week.** Someone who does not know
    where the sharp edges are will find things no audit will.
 
-### P1.2 — Upgrade and migration safety
+### P1.2 — Upgrade and migration safety ✅ closed
 
-`goose.Up` runs on every `Connect` ([`connect.go:63`](internal/db/connect.go)).
-Untested: what happens when a user upgrades with an existing database, when a
-migration fails halfway, or when a newer binary opens an older database and
-vice versa. Releases already ship via `.goreleaser.yml`, so users *will* upgrade
-across schema changes.
+`goose.Up` runs on every `Connect`, releases ship via `.goreleaser.yml`, and so
+every user walks the upgrade path while nothing tested it. Fresh databases were
+covered by every other test in the tree; populated ones by none — which is the
+only case a real user has.
 
-Needs: a test that migrates a populated database from an older schema forward, a
-clear failure message when migration fails, and a documented recovery path.
+Now tested from *every* recorded version, not just the newest, since a user
+arrives from whatever build they last ran: seed a populated database at version
+N, migrate to current, assert the rows, the added columns and the
+trigger-maintained counters all survive. Idempotence is covered too, because
+`Connect` re-runs `goose.Up` on every single start.
+
+Two behaviours added rather than merely asserted:
+
+- **A database from a newer build is refused** (`ensureNotNewer`). `goose.Up`
+  accepts one happily — there is nothing left to apply, so it *succeeds* — and
+  the older binary then runs against a schema it does not know, surfacing much
+  later as an unrelated query failing on a missing column. Downgrade is
+  deliberately not offered: the Down migrations exist but have never been run
+  against real data.
+- **Failure says where it stopped and that retrying is safe**
+  (`migrationFailure`). Every migration here is transactional, so a failure
+  leaves a known-good version rather than a half-applied one; saying so is the
+  difference between "my database is corrupt" and "it stopped at a known point".
+  The connection also leaked on this path and no longer does.
+
+Recovery is documented in the README's [Upgrading](README.md#upgrading) section.
+Both tests were verified to fail against a deliberately broken implementation:
+the refusal test against a no-op check, the upgrade test against an upgrade that
+silently drops a row.
 
 ### P1.3 — Failure behaviour
 
