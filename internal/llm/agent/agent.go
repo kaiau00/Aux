@@ -255,7 +255,10 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 	if !a.provider.Model().SupportsAttachments && attachments != nil {
 		attachments = nil
 	}
-	events := make(chan AgentEvent)
+	// Buffered by one so the final hand-off never blocks on a consumer that has
+	// already walked away. This goroutine owns the session's busy marker, so a
+	// send that blocks forever would keep the session busy forever.
+	events := make(chan AgentEvent, 1)
 	if a.IsSessionBusy(sessionID) {
 		return nil, ErrSessionBusy
 	}
@@ -265,6 +268,20 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 	a.activeRequests.Store(sessionID, cancel)
 	go func() {
 		logging.Debug("Request started", "sessionID", sessionID)
+		// The normal path below tears down in its own order, which subscribers
+		// to the published event depend on. These defers are the safety net for
+		// the abnormal one: without them a panic leaves the busy marker set and
+		// the channel open, so the session accepts no further message and any
+		// consumer ranging over the channel blocks forever. Delete and cancel
+		// are both idempotent, so running twice on the normal path is harmless.
+		//
+		// Order matters. Defers run last-registered-first, so RecoverPanic
+		// delivers its error event first, and the busy marker is released
+		// before the close that tells a consumer the turn is over -- otherwise
+		// an immediate retry on the same session would race and see it busy.
+		defer close(events)
+		defer a.activeRequests.Delete(sessionID)
+		defer cancel()
 		defer logging.RecoverPanic("agent.Run", func() {
 			events <- a.err(fmt.Errorf("panic while running the agent"))
 		})
@@ -281,7 +298,6 @@ func (a *agent) Run(ctx context.Context, sessionID string, content string, attac
 		cancel()
 		a.Publish(pubsub.CreatedEvent, result)
 		events <- result
-		close(events)
 	}()
 	return events, nil
 }

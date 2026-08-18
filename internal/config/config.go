@@ -219,6 +219,12 @@ func Load(workingDir string, debug bool) (*Config, error) {
 	}
 
 	applyDefaultValues()
+
+	// Crash logs belong with the rest of Aux's state rather than in whichever
+	// repository the user happened to run from. Set unconditionally: a panic is
+	// not a debug-only event.
+	logging.PanicDir = cfg.Data.Directory
+
 	defaultLevel := slog.LevelInfo
 	if cfg.Debug {
 		defaultLevel = slog.LevelDebug
