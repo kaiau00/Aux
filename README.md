@@ -20,6 +20,7 @@ Aux is a local-first terminal and browser coding agent built around one idea: in
 - [LSP](#lsp-language-server-protocol)
 - [Custom commands](#custom-commands)
 - [Architecture](#architecture)
+- [Upgrading](#upgrading)
 - [Development](#development)
 
 ## What Aux is
@@ -463,6 +464,26 @@ LOCAL_ENDPOINT=http://localhost:1235/v1
   }
 }
 ```
+
+## Upgrading
+
+Aux keeps everything in one SQLite database at `<data.directory>/aux.db`,
+`.aux/aux.db` by default: sessions, messages, tasks, and cost history. Releases
+add to its schema, and migrations run automatically the next time you start.
+
+Migrations only ever add, and each one runs inside a transaction. An upgrade
+therefore either applies completely or leaves the database exactly where it
+was — there is no half-migrated state to repair by hand.
+
+If an upgrade fails, Aux reports the schema version the database is still at and
+refuses to start rather than run against a schema it does not understand.
+Re-running retries it. If it keeps failing that is a bug worth reporting, with
+the error included. As a last resort, moving `aux.db` aside starts a fresh one:
+you lose session and cost history, and nothing in your repository.
+
+**Downgrading is not supported.** An older build refuses a database written by a
+newer one, instead of opening it and failing later on a column it has never
+heard of. Upgrade again, or move the file aside.
 
 ## Development
 
